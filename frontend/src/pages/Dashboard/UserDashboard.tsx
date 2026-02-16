@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import Loader from "../Loader/Loader";
 import {
@@ -39,6 +39,7 @@ export default function UserDashboard() {
   const [cities, setCities] = useState<City[]>([]);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState("");
 
   useEffect(() => {
     const fetchDashboard = async () => {
@@ -55,6 +56,25 @@ export default function UserDashboard() {
     fetchDashboard();
   }, []);
 
+  const normalizedSearchTerm = searchTerm.trim().toLowerCase();
+
+  const filteredCities = useMemo(() => {
+    if (!normalizedSearchTerm) return cities;
+
+    return cities
+      .map((city) => {
+        const cityMatches = city.name.toLowerCase().includes(normalizedSearchTerm);
+        const matchedBoards = cityMatches
+          ? city.boards
+          : city.boards.filter((board) =>
+              board.name.toLowerCase().includes(normalizedSearchTerm)
+            );
+
+        return { ...city, boards: matchedBoards };
+      })
+      .filter((city) => city.boards.length > 0);
+  }, [cities, normalizedSearchTerm]);
+
   if (loading) {
     return <Loader message="Loading dashboard..." />;
   }
@@ -64,13 +84,18 @@ export default function UserDashboard() {
       {/* ================= TOP BAR ================= */}
       <header className="h-14 bg-white/80 backdrop-blur-sm border-b flex items-center px-4 gap-4 z-10">
         <div className="flex items-center gap-3">
-          <div className="h-8 flex items-center cursor-pointer">
+          <button
+            type="button"
+            onClick={() => navigate("/")}
+            className="h-8 flex items-center cursor-pointer"
+            title="Go to home"
+          >
             <img
               src="/images/logo/connected_logo.png"
               alt="Connected Logo"
               className="h-8 w-auto object-contain"
             />
-          </div>
+          </button>
           {/* <TopbarLink
             label="Home"
             active={false}
@@ -83,6 +108,8 @@ export default function UserDashboard() {
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
             <input
               placeholder="Search boards..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
               className="w-full pl-10 pr-4 py-2 bg-gray-100/70 border rounded-lg focus:bg-white focus:ring-2 focus:ring-blue-200 transition"
             />
           </div>
@@ -91,9 +118,14 @@ export default function UserDashboard() {
         <div className="flex items-center gap-2">
           {/* <IconCircle><HelpCircle size={18} /></IconCircle>
           <IconCircle><Bell size={18} /></IconCircle> */}
-          <div className="h-8 px-3 rounded-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white text-sm font-semibold flex items-center justify-center shadow-sm">
+          <button
+            type="button"
+            onClick={() => navigate("/profile")}
+            className="h-8 px-3 rounded-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white text-sm font-semibold flex items-center justify-center shadow-sm hover:opacity-95"
+            title="Edit profile"
+          >
             {profile?.first_name || "User"}
-          </div>
+          </button>
         </div>
       </header>
 
@@ -130,15 +162,36 @@ export default function UserDashboard() {
         {/* ================= MAIN CONTENT – ALL CITIES ================= */}
         <main className="flex-1 px-6 md:px-12 py-10 overflow-y-auto">
           <div className="flex flex-col gap-12 max-w-6xl mx-auto">
-            {cities.length === 0 ? (
+            <section className="rounded-2xl border border-gray-200 bg-white px-6 py-5 shadow-sm">
+              <h1 className="text-2xl font-extrabold text-gray-900">Hi {profile?.first_name || "User"}</h1>
+              <p className="mt-1 text-sm text-gray-600">
+                Get started below with your designated workspace.
+              </p>
+              <div className="mt-4 flex flex-wrap gap-2.5">
+                {cities.map((city) => (
+                  <span
+                    key={`workspace-${city.id}`}
+                    className="inline-flex items-center rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm font-medium text-gray-700"
+                  >
+                    {city.name}
+                  </span>
+                ))}
+              </div>
+            </section>
+
+            {filteredCities.length === 0 ? (
               <div className="text-center py-20 text-gray-600 bg-white rounded-2xl shadow-sm border">
-                <p className="text-xl font-semibold mb-3">No cities available yet</p>
+                <p className="text-xl font-semibold mb-3">
+                  {normalizedSearchTerm ? "No matching boards found" : "No cities available yet"}
+                </p>
                 <p className="text-gray-500">
-                  Contact your administrator or create your first city
+                  {normalizedSearchTerm
+                    ? "Try another board or city name"
+                    : "Contact your administrator or create your first city"}
                 </p>
               </div>
             ) : (
-              cities.map((city) => (
+              filteredCities.map((city) => (
                 <section key={city.id} className="space-y-5">
                   {/* City Header */}
                   <div className="flex items-center justify-between">

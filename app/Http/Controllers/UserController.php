@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Board;
+use App\Models\BoardList;
 use App\Models\User;
 use App\Models\Role;
 use Illuminate\Http\Request;
@@ -50,6 +52,9 @@ class UserController extends Controller
      */
     protected function filterUsersForAuth()
     {
+        $authUser = $this->authUser();
+        $authRoleId = (int) ($authUser->role_id ?? 0);
+
         $query = User::with([
             'role',
             'cities.boards.lists',
@@ -62,9 +67,18 @@ class UserController extends Controller
         }
 
         if ($this->isAdmin()) {
-            return $query->whereHas('role', function ($q) {
-                $q->where('name', 'user');
-            });
+            // Admin can view role IDs 2, 3 and 4.
+            return $query->whereIn('role_id', [2, 3, 4]);
+        }
+
+        // Role 3 can view role 3 and 4 users.
+        if ($authRoleId === 3) {
+            return $query->whereIn('role_id', [3, 4]);
+        }
+
+        // Role 4 can only view own user.
+        if ($authRoleId === 4) {
+            return $query->whereKey($authUser->id);
         }
 
         // Non-admin / non-superadmin gets no users
@@ -390,6 +404,22 @@ class UserController extends Controller
 
         $user->boards()->sync($validated['boards'] ?? []);
 
+        // Keep hierarchy consistent: board access implies city access.
+        $boardIds = $validated['boards'] ?? [];
+        if (!empty($boardIds)) {
+            $cityIds = Board::whereIn('id', $boardIds)
+                ->pluck('city_id')
+                ->filter()
+                ->map(fn ($id) => (int) $id)
+                ->unique()
+                ->values()
+                ->all();
+
+            if (!empty($cityIds)) {
+                $user->cities()->syncWithoutDetaching($cityIds);
+            }
+        }
+
         return response()->json([
             'message' => 'Board permissions updated successfully',
             'user' => $user->load([
@@ -415,6 +445,35 @@ class UserController extends Controller
         }
 
         $user->boardLists()->sync($validated['lists'] ?? []);
+
+        // Keep hierarchy consistent:
+        // list access implies board + city access.
+        $listIds = $validated['lists'] ?? [];
+        if (!empty($listIds)) {
+            $boardIds = BoardList::whereIn('id', $listIds)
+                ->pluck('board_id')
+                ->filter()
+                ->map(fn ($id) => (int) $id)
+                ->unique()
+                ->values()
+                ->all();
+
+            if (!empty($boardIds)) {
+                $user->boards()->syncWithoutDetaching($boardIds);
+
+                $cityIds = Board::whereIn('id', $boardIds)
+                    ->pluck('city_id')
+                    ->filter()
+                    ->map(fn ($id) => (int) $id)
+                    ->unique()
+                    ->values()
+                    ->all();
+
+                if (!empty($cityIds)) {
+                    $user->cities()->syncWithoutDetaching($cityIds);
+                }
+            }
+        }
 
         return response()->json([
             'message' => 'List permissions updated successfully',

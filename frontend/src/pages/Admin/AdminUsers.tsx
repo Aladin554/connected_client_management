@@ -36,11 +36,14 @@ export default function AdminUsers() {
   const [selectAll, setSelectAll] = useState(false);
   const [deleteUserId, setDeleteUserId] = useState<number | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [roleFilter, setRoleFilter] = useState<"all" | "user" | "admin">("all");
+  const [roleFilter, setRoleFilter] = useState<"all" | "2" | "3" | "4">("all");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
 
   const navigate = useNavigate();
   const location = useLocation();
+  const canShowAddUserButton =
+    currentUser?.role_id === 1 ||
+    (currentUser?.role_id === 2 && Number(currentUser?.can_create_users) === 1);
 
   // Toast from navigation state
   useEffect(() => {
@@ -267,9 +270,7 @@ export default function AdminUsers() {
     })
     .filter((u) => {
       if (roleFilter === "all") return true;
-      if (roleFilter === "admin") return u.role?.name.toLowerCase() === "admin";
-      if (roleFilter === "user") return u.role?.name.toLowerCase() === "user";
-      return true;
+      return Number(u.role_id) === Number(roleFilter);
     })
     .sort((a, b) => {
       if (!a.created_at || !b.created_at) return 0;
@@ -294,12 +295,14 @@ export default function AdminUsers() {
         <h1 className="text-lg sm:text-2xl font-bold text-gray-900 dark:text-gray-100 text-center sm:text-left">
           Admin User List
         </h1>
-        <Link
-          to="/dashboard/admin-users/add"
-          className="flex items-center gap-2 px-5 py-3 rounded-lg bg-blue-600 text-white text-base font-medium shadow-sm hover:bg-blue-700 transition-all"
-        >
-          <Plus size={20} /> Add User
-        </Link>
+        {canShowAddUserButton ? (
+          <Link
+            to="/dashboard/admin-users/add"
+            className="flex items-center gap-2 px-5 py-3 rounded-lg bg-blue-600 text-white text-base font-medium shadow-sm hover:bg-blue-700 transition-all"
+          >
+            <Plus size={20} /> Add User
+          </Link>
+        ) : null}
       </div>
 
       {/* CONTROLS */}
@@ -335,12 +338,13 @@ export default function AdminUsers() {
           />
           <select
             value={roleFilter}
-            onChange={(e) => setRoleFilter(e.target.value as any)}
+            onChange={(e) => setRoleFilter(e.target.value as "all" | "2" | "3" | "4")}
             className="border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-8 py-2 rounded-lg text-base focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             <option value="all">All Roles</option>
-            <option value="admin">Admin</option>
-            <option value="user">User</option>
+            <option value="2">Role 2</option>
+            <option value="3">Role 3</option>
+            <option value="4">Role 4</option>
           </select>
           <select
             value={sortOrder}

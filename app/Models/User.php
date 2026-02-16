@@ -97,4 +97,14 @@ public function boardLists()
         'board_list_user'
     );
 }
+
+public function boardCards()
+{
+    return $this->belongsToMany(
+        BoardCard::class,
+        'board_card_user',
+        'user_id',
+        'board_card_id'
+    );
+}
 }

@@ -71,6 +71,7 @@ const ProtectedRoute = ({ children }: ProtectedRouteProps) => {
   const isAdminRoute = path.startsWith("/dashboard");
   const isChooseDashboard = path === "/choose-dashboard";
   const isUserDashboard = path.startsWith("/user-dashboard");
+  const isProfileRoute = path.startsWith("/profile");
 
   // =============================
   // ✅ ROLE 1 → FULL ACCESS
@@ -90,7 +91,7 @@ const ProtectedRoute = ({ children }: ProtectedRouteProps) => {
     }
 
     // panel_permission = 0 → only user dashboard
-    if (isUserDashboard) {
+    if (isUserDashboard || isProfileRoute) {
       return <>{children}</>;
     }
 
@@ -102,7 +103,7 @@ const ProtectedRoute = ({ children }: ProtectedRouteProps) => {
   // =============================
   if (roleId === 4) {
 
-    if (isUserDashboard) {
+    if (isUserDashboard || isProfileRoute) {
       return <>{children}</>;
     }
 

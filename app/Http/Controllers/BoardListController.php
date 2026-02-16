@@ -8,6 +8,11 @@ use Illuminate\Http\Request;
 
 class BoardListController extends Controller
 {
+    private function canManageAllLists($user): bool
+    {
+        return (int) $user->role_id === 1;
+    }
+
     private function assertCanAccessBoard(Board $board): void
     {
         $user = auth()->user();
@@ -26,13 +31,38 @@ class BoardListController extends Controller
         }
     }
 
+    private function assertCanAccessList(BoardList $boardList): void
+    {
+        $user = auth()->user();
+
+        if ($this->canManageAllLists($user)) {
+            return;
+        }
+
+        $hasListAccess = $user->boardLists()->whereKey($boardList->id)->exists();
+        if (!$hasListAccess) {
+            abort(403, 'Forbidden');
+        }
+    }
+
     public function index(Board $board)
     {
         $this->assertCanAccessBoard($board);
 
-        return response()->json(
-            $board->lists()->with('cards')->get()
-        );
+        $query = $board->lists()->with([
+            'cards' => function ($cardQuery) {
+                $cardQuery
+                    ->where('is_archived', false)
+                    ->orderBy('position');
+            },
+        ]);
+        if (!$this->canManageAllLists(auth()->user())) {
+            $query->whereHas('users', function ($userQuery) {
+                $userQuery->where('users.id', auth()->id());
+            });
+        }
+
+        return response()->json($query->get());
     }
 
     public function store(Request $request, Board $board)
@@ -41,16 +71,31 @@ class BoardListController extends Controller
 
         $validated = $request->validate([
             'title'    => 'required|string|max:255',
+            'category' => 'nullable|integer|in:0,1,2',
             'position' => 'nullable|integer|min:0',
         ]);
 
         $maxPosition = $board->lists()->max('position') ?? 0;
         $list = $board->lists()->create([
             'title'    => $validated['title'],
+            'category' => $validated['category'] ?? BoardList::CATEGORY_ADMISSION,
             'position' => $validated['position'] ?? $maxPosition + 10000,
         ]);
 
-        return response()->json($list->load('cards'), 201);
+        // Keep Cities & Access Control in sync:
+        // when a new list is created, grant it to users already assigned to this board.
+        $boardUserIds = $board->users()->pluck('users.id')->all();
+        if (!empty($boardUserIds)) {
+            $list->users()->syncWithoutDetaching($boardUserIds);
+        }
+
+        return response()->json($list->load([
+            'cards' => function ($cardQuery) {
+                $cardQuery
+                    ->where('is_archived', false)
+                    ->orderBy('position');
+            },
+        ]), 201);
     }
 
     public function update(Request $request, Board $board, BoardList $boardList)
@@ -60,15 +105,28 @@ class BoardListController extends Controller
         }
 
         $this->assertCanAccessBoard($board);
+        $this->assertCanAccessList($boardList);
+
+        // Only superadmin (role_id = 1) can rename list titles.
+        if ($request->has('title') && (int) auth()->user()->role_id !== 1) {
+            return response()->json(['message' => 'Only superadmin can edit list title'], 403);
+        }
 
         $validated = $request->validate([
             'title'    => 'sometimes|required|string|max:255',
+            'category' => 'sometimes|integer|in:0,1,2',
             'position' => 'sometimes|integer|min:0',
         ]);
 
         $boardList->update($validated);
 
-        return response()->json($boardList->load('cards'));
+        return response()->json($boardList->load([
+            'cards' => function ($cardQuery) {
+                $cardQuery
+                    ->where('is_archived', false)
+                    ->orderBy('position');
+            },
+        ]));
     }
 
     public function destroy(Board $board, BoardList $boardList)
@@ -78,6 +136,7 @@ class BoardListController extends Controller
         }
 
         $this->assertCanAccessBoard($board);
+        $this->assertCanAccessList($boardList);
 
         $boardList->delete();
         return response()->json(['message' => 'List deleted']);

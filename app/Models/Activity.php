@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Storage;
 
 class Activity extends Model
 {
@@ -16,6 +17,14 @@ class Activity extends Model
         'list_id',
         'action',
         'details',
+        'attachment_path',
+        'attachment_name',
+        'attachment_mime',
+        'attachment_size',
+    ];
+
+    protected $appends = [
+        'attachment_url',
     ];
 
     public function user()
@@ -31,5 +40,14 @@ class Activity extends Model
     public function list()
     {
         return $this->belongsTo(BoardList::class, 'list_id');
+    }
+
+    public function getAttachmentUrlAttribute(): ?string
+    {
+        if (empty($this->attachment_path)) {
+            return null;
+        }
+
+        return Storage::disk('public')->url($this->attachment_path);
     }
 }

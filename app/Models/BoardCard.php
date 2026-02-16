@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class BoardCard extends Model
 {
@@ -25,8 +26,14 @@ class BoardCard extends Model
         'last_name',
         'invoice',
         'country_label_id',
+        'country_label_ids',
         'intake_label_id',
-        'due_date',           // ✅ new column added
+        'service_area_id',
+        'service_area_ids',
+        'due_date',
+        'payment_done',
+        'dependant_payment_done',
+        'is_archived',
     ];
 
     /**
@@ -35,11 +42,17 @@ class BoardCard extends Model
      * @var array<string, string>
      */
     protected $casts = [
-        'position'          => 'integer',
-        'checked'           => 'boolean',
-        'country_label_id'  => 'integer',
-        'intake_label_id'   => 'integer',
-        'due_date'          => 'date',   // ✅ cast as date
+        'position' => 'integer',
+        'checked' => 'boolean',
+        'country_label_id' => 'integer',
+        'country_label_ids' => 'array',
+        'intake_label_id' => 'integer',
+        'service_area_id' => 'integer',
+        'service_area_ids' => 'array',
+        'due_date' => 'date',
+        'payment_done' => 'boolean',
+        'dependant_payment_done' => 'boolean',
+        'is_archived' => 'boolean',
     ];
 
     /**
@@ -72,5 +85,26 @@ class BoardCard extends Model
     public function intakeLabel(): BelongsTo
     {
         return $this->belongsTo(IntakeLabel::class, 'intake_label_id');
+    }
+
+    /**
+     * Get the service area assigned to this card.
+     */
+    public function serviceArea(): BelongsTo
+    {
+        return $this->belongsTo(ServiceArea::class, 'service_area_id');
+    }
+
+    /**
+     * Users who can view this card when member-restricted.
+     */
+    public function members(): BelongsToMany
+    {
+        return $this->belongsToMany(
+            User::class,
+            'board_card_user',
+            'board_card_id',
+            'user_id'
+        );
     }
 }

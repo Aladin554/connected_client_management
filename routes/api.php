@@ -9,6 +9,7 @@ use App\Http\Controllers\CountryLabelController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\IntakeLabelController;
 use App\Http\Controllers\RoleController;
+use App\Http\Controllers\ServiceAreaController;
 use App\Http\Controllers\UserController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
@@ -58,6 +59,8 @@ Route::middleware(['auth:sanctum', CheckPanelAccess::class, 'admin.ip'])->group(
     Route::get('/boards', [BoardController::class, 'index']);
     Route::post('/boards', [BoardController::class, 'store']);        // Superadmin only
     Route::get('/boards/{board}', [BoardController::class, 'show']);
+    Route::get('/boards/{board}/archived-cards', [BoardCardController::class, 'archivedByBoard']);
+    Route::get('/boards/{board}/activities', [BoardCardController::class, 'boardActivities']);
     Route::put('/boards/{board}', [BoardController::class, 'update']); // Superadmin only
     Route::delete('/boards/{board}', [BoardController::class, 'destroy']); // Superadmin only
     Route::get('/boards-with-gradients', [BoardController::class, 'indexWithGradients']);
@@ -78,12 +81,18 @@ Route::middleware(['auth:sanctum', CheckPanelAccess::class, 'admin.ip'])->group(
     Route::put('/cards/{boardCard}/labels', [BoardCardController::class, 'updateLabel']);
     Route::put('/cards/{boardCard}/description', [BoardCardController::class, 'updateDescription']);
     Route::put('/cards/{boardCard}/due-date', [BoardCardController::class, 'updateDueDate']);
+    Route::put('/cards/{boardCard}/payment', [BoardCardController::class, 'updatePaymentStatus']);
+    Route::put('/cards/{boardCard}/dependant-payment', [BoardCardController::class, 'updateDependantPaymentStatus']);
+    Route::put('/cards/{boardCard}/archive', [BoardCardController::class, 'updateArchiveStatus']);
+    Route::get('/cards/{boardCard}/members', [BoardCardController::class, 'members']);
+    Route::put('/cards/{boardCard}/members', [BoardCardController::class, 'updateMembers']);
 
     // ────────────────────────────────────────────────
     // Activities & Comments
     // ────────────────────────────────────────────────
     Route::get('/cards/{boardCard}/activities', [BoardCardController::class, 'activities']);
     Route::post('/cards/{boardCard}/activities', [BoardCardController::class, 'storeComment']);
+    Route::get('/activities/{activity}/attachment', [BoardCardController::class, 'downloadAttachment']);
 
     // Optional: general activity logging endpoint
     // (you can call this from other controllers if needed)
@@ -95,6 +104,7 @@ Route::middleware(['auth:sanctum', CheckPanelAccess::class, 'admin.ip'])->group(
     Route::get('/dashboard-counts', [DashboardController::class, 'index']);
     Route::apiResource('country-labels', CountryLabelController::class);
     Route::apiResource('intake-labels', IntakeLabelController::class);
+    Route::apiResource('service-areas', ServiceAreaController::class);
 
     // ────────────────────────────────────────────────
     // Debug / Helpers

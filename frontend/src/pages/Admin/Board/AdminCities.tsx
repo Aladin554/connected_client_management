@@ -171,6 +171,14 @@ export default function AdminCities() {
         return prev.filter((id) => id !== boardId);
       }
 
+      const board = cities
+        .flatMap((c) => c.boards)
+        .find((b) => b.id === boardId);
+      const listIds = board?.lists?.map((l) => l.id) || [];
+      if (listIds.length > 0) {
+        setSelectedListIds((p) => [...new Set([...p, ...listIds])]);
+      }
+
       const parentCity = cities.find((c) => c.boards.some((b) => b.id === boardId));
       if (parentCity && !selectedCityIds.includes(parentCity.id)) {
         setSelectedCityIds((p) => [...p, parentCity.id]);

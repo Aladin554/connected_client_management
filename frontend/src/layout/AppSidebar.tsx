@@ -67,6 +67,7 @@ const AppSidebar: React.FC = () => {
           icon: <ListIcon />,
           subItems: [
             { name: "City", path: "/dashboard/admin-boards" },
+            { name: "Service Area", path: "/dashboard/service-area" },
             { name: "Country Labels", path: "/dashboard/country-labels" },
             { name: "Intake Labels", path: "/dashboard/intake-labels" },
           ],

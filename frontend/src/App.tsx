@@ -56,6 +56,7 @@ const BoardView = lazy(() => import("./pages/Branch/BoardView.tsx"));
 
 const CountryLabels = lazy(() => import("./pages/Admin/Label/CountryLabels.tsx"));
 const IntakeLabels = lazy(() => import("./pages/Admin/Label/IntakeLabels.tsx"));
+const ServiceArea = lazy(() => import("./pages/Admin/Label/ServiceArea.tsx"));
 
 export default function App() {
   return (
@@ -193,6 +194,7 @@ export default function App() {
 
           {/* ===== LABELS ===== */}
 
+          <Route path="service-area" element={<ServiceArea />} />
           <Route path="country-labels" element={<CountryLabels />} />
           <Route path="intake-labels" element={<IntakeLabels />} />
 

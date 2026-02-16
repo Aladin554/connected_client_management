@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Board;
 use App\Models\City;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -12,7 +13,7 @@ class CityController extends Controller
     private function isSuperAdmin(): bool
     {
         $user = auth()->user();
-        return $user && $user->role?->name === 'superadmin';
+        return $user && ((int) $user->role_id === 1 || $user->role?->name === 'superadmin');
         // Alternative if you still want ID check as fallback:
         // return $user && ($user->role?->name === 'superadmin' || $user->id === 1);
     }
@@ -31,11 +32,29 @@ class CityController extends Controller
         $query = City::query()->with(['boards.lists']); // ← crucial fix for frontend lists
 
         if (!$this->isSuperAdmin()) {
-            $query->whereIn('id', $user->cities->pluck('id'))
-                  ->with(['boards' => function ($q) use ($user) {
-                      $q->whereIn('id', $user->boards->pluck('id'))
-                        ->with('lists');
-                  }]);
+            // Effective access comes from city + board + list permissions.
+            $directCityIds = $user->cities()->pluck('cities.id')->map(fn ($id) => (int) $id)->all();
+            $boardIdsFromBoardPerm = $user->boards()->pluck('boards.id')->map(fn ($id) => (int) $id)->all();
+            $boardIdsFromListPerm = $user->boardLists()->pluck('board_lists.board_id')->map(fn ($id) => (int) $id)->all();
+
+            $allowedBoardIds = array_values(array_unique(array_merge($boardIdsFromBoardPerm, $boardIdsFromListPerm)));
+            $cityIdsFromBoards = !empty($allowedBoardIds)
+                ? Board::whereIn('id', $allowedBoardIds)->pluck('city_id')->map(fn ($id) => (int) $id)->all()
+                : [];
+
+            $allowedCityIds = array_values(array_unique(array_merge($directCityIds, $cityIdsFromBoards)));
+
+            $query->whereIn('id', $allowedCityIds)
+                ->with([
+                    'boards' => function ($q) use ($allowedBoardIds) {
+                        if (empty($allowedBoardIds)) {
+                            $q->whereRaw('0 = 1');
+                            return;
+                        }
+
+                        $q->whereIn('id', $allowedBoardIds)->with('lists');
+                    }
+                ]);
         }
 
         $cities = $query->latest()->get();
