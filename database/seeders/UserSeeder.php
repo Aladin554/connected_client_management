@@ -22,7 +22,7 @@ class UserSeeder extends Seeder
                 'email' => 'superadmin@gmail.com',
                 'password' => Hash::make('12345678'), // Always hash passwords
                 'role_id' => 1, // superadmin
-                'report_notification' => 1,
+                'report_notification' => 0,
                 'created_at' => now(),
                 'updated_at' => now(),
             ],
@@ -32,7 +32,7 @@ class UserSeeder extends Seeder
                 'email' => 'admin@gmail.com',
                 'password' => Hash::make('12345678'),
                 'role_id' => 2, // admin
-                'report_notification' => 1,
+                'report_notification' => 0,
                 'created_at' => now(),
                 'updated_at' => now(),
             ],
@@ -41,8 +41,8 @@ class UserSeeder extends Seeder
                 'last_name' => 'User',
                 'email' => 'subadmin@gmail.com',
                 'password' => Hash::make('12345678'),
-                'role_id' => 2, // admin
-                'report_notification' => 1,
+                'role_id' => 3, // admin
+                'report_notification' => 0,
                 'created_at' => now(),
                 'updated_at' => now(),
             ],
@@ -51,18 +51,8 @@ class UserSeeder extends Seeder
                 'last_name' => 'User',
                 'email' => 'counsellor@gmail.com',
                 'password' => Hash::make('12345678'),
-                'role_id' => 2, // admin
-                'report_notification' => 1,
-                'created_at' => now(),
-                'updated_at' => now(),
-            ],
-            [
-                'first_name' => 'Regular',
-                'last_name' => 'User',
-                'email' => 'user@gmail.com',
-                'password' => Hash::make('12345678'),
-                'role_id' => 3, // user
-                'report_notification' => 1,
+                'role_id' => 4, // admin
+                'report_notification' => 0,
                 'created_at' => now(),
                 'updated_at' => now(),
             ],

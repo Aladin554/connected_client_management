@@ -273,9 +273,11 @@ class BoardCardController extends Controller
 
             $this->assertCanAccessBoardList($targetList);
 
+            $currentCategory = (int) (($currentList->category ?? BoardList::CATEGORY_ADMISSION));
             $targetCategory = (int) ($targetList->category ?? BoardList::CATEGORY_ADMISSION);
             if (
                 $targetCategory === BoardList::CATEGORY_VISA
+                && $currentCategory !== BoardList::CATEGORY_VISA
                 && !$boardCard->payment_done
             ) {
                 return response()->json([
@@ -285,6 +287,7 @@ class BoardCardController extends Controller
 
             if (
                 $targetCategory === BoardList::CATEGORY_DEPENDANT_VISA
+                && $currentCategory !== BoardList::CATEGORY_DEPENDANT_VISA
                 && !$boardCard->dependant_payment_done
             ) {
                 return response()->json([
@@ -336,9 +339,11 @@ class BoardCardController extends Controller
         $this->assertCanAccessBoardList($newList);
         $this->assertCanAccessBoardCard($card);
 
+        $oldCategory = (int) (($oldList->category ?? BoardList::CATEGORY_ADMISSION));
         $targetCategory = (int) ($newList->category ?? BoardList::CATEGORY_ADMISSION);
         if (
             $targetCategory === BoardList::CATEGORY_VISA
+            && $oldCategory !== BoardList::CATEGORY_VISA
             && !$card->payment_done
         ) {
             return response()->json([
@@ -348,6 +353,7 @@ class BoardCardController extends Controller
 
         if (
             $targetCategory === BoardList::CATEGORY_DEPENDANT_VISA
+            && $oldCategory !== BoardList::CATEGORY_DEPENDANT_VISA
             && !$card->dependant_payment_done
         ) {
             return response()->json([

@@ -112,6 +112,11 @@ class BoardListController extends Controller
             return response()->json(['message' => 'Only superadmin can edit list title'], 403);
         }
 
+        // Only superadmin (role_id = 1) can reorder list positions.
+        if ($request->has('position') && (int) auth()->user()->role_id !== 1) {
+            return response()->json(['message' => 'Only superadmin can reorder lists'], 403);
+        }
+
         $validated = $request->validate([
             'title'    => 'sometimes|required|string|max:255',
             'category' => 'sometimes|integer|in:0,1,2',
