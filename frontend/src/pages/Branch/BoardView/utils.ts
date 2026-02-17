@@ -85,6 +85,7 @@ export const DESCRIPTION_TEMPLATE = [
   "Student's Phone Number:",
   "Student's Email:",
   "Emergency Phone Number:",
+  "Date of Birth:",
   "",
   "Education Background (Grades & Stream):",
   "Gap explanation if applicable:",

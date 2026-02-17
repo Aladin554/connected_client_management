@@ -1,24 +1,14 @@
-import { useState, useEffect, useMemo } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { Search } from "lucide-react";
 import Loader from "../Loader/Loader";
-import {
-  LayoutGrid,
-  Home,
-  Users,
-  Search,
-  Bell,
-  HelpCircle,
-  Settings,
-} from "lucide-react";
 import api from "../../api/axios";
 import { getMeCached } from "../../utils/me";
-
-/* ================= TYPES ================= */
 
 interface Board {
   id: number;
   name: string;
-  background_gradient?: string;
+  background_gradient?: string | null;
 }
 
 interface City {
@@ -31,7 +21,19 @@ interface Profile {
   first_name?: string | null;
 }
 
-/* ================= COMPONENT ================= */
+function normalizeCities(payload: unknown): City[] {
+  if (Array.isArray(payload)) return payload as City[];
+
+  if (
+    typeof payload === "object" &&
+    payload !== null &&
+    Array.isArray((payload as { data?: unknown }).data)
+  ) {
+    return (payload as { data: City[] }).data;
+  }
+
+  return [];
+}
 
 export default function UserDashboard() {
   const navigate = useNavigate();
@@ -39,21 +41,27 @@ export default function UserDashboard() {
   const [cities, setCities] = useState<City[]>([]);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
 
   useEffect(() => {
     const fetchDashboard = async () => {
       try {
         setLoading(true);
+        setErrorMessage(null);
+
         const [citiesRes, me] = await Promise.all([api.get("/cities"), getMeCached()]);
-        setCities(citiesRes.data || []);
-        setProfile(me as any);
+        setCities(normalizeCities(citiesRes.data));
+        setProfile(me as Profile);
+      } catch (err) {
+        console.error("Failed to load user dashboard", err);
+        setErrorMessage("Could not load dashboard data. Please refresh the page.");
       } finally {
         setLoading(false);
       }
     };
 
-    fetchDashboard();
+    void fetchDashboard();
   }, []);
 
   const normalizedSearchTerm = searchTerm.trim().toLowerCase();
@@ -63,14 +71,17 @@ export default function UserDashboard() {
 
     return cities
       .map((city) => {
-        const cityMatches = city.name.toLowerCase().includes(normalizedSearchTerm);
-        const matchedBoards = cityMatches
+        const cityMatch = city.name.toLowerCase().includes(normalizedSearchTerm);
+        const boards = cityMatch
           ? city.boards
           : city.boards.filter((board) =>
               board.name.toLowerCase().includes(normalizedSearchTerm)
             );
 
-        return { ...city, boards: matchedBoards };
+        return {
+          ...city,
+          boards,
+        };
       })
       .filter((city) => city.boards.length > 0);
   }, [cities, normalizedSearchTerm]);
@@ -81,26 +92,20 @@ export default function UserDashboard() {
 
   return (
     <div className="h-screen bg-gray-50/70 flex flex-col text-gray-800">
-      {/* ================= TOP BAR ================= */}
       <header className="h-14 bg-white/80 backdrop-blur-sm border-b flex items-center px-4 gap-4 z-10">
         <div className="flex items-center gap-3">
           <button
             type="button"
             onClick={() => navigate("/")}
-            className="h-8 flex items-center cursor-pointer"
+            className="h-7 flex items-center cursor-pointer"
             title="Go to home"
           >
             <img
               src="/images/logo/connected_logo.png"
               alt="Connected Logo"
-              className="h-8 w-auto object-contain"
+              className="h-7 w-auto object-contain"
             />
           </button>
-          {/* <TopbarLink
-            label="Home"
-            active={false}
-            onClick={() => navigate("/user-dashboard")}
-          /> */}
         </div>
 
         <div className="flex-1 flex justify-center px-6">
@@ -116,8 +121,6 @@ export default function UserDashboard() {
         </div>
 
         <div className="flex items-center gap-2">
-          {/* <IconCircle><HelpCircle size={18} /></IconCircle>
-          <IconCircle><Bell size={18} /></IconCircle> */}
           <button
             type="button"
             onClick={() => navigate("/profile")}
@@ -130,54 +133,22 @@ export default function UserDashboard() {
       </header>
 
       <div className="flex flex-1 overflow-hidden">
-        {/* SIDEBAR – unchanged */}
-        <aside className="w-64 bg-white/60 border-r px-3 py-5 hidden md:block overflow-y-auto">
-          {/* ... sidebar content remains the same ... */}
-          <div className="space-y-1 mb-8">
-            <SidebarItem icon={<LayoutGrid size={18} />} label="Boards" active />
-            {/* <SidebarItem icon={<Home size={18} />} label="Home" /> */}
-          </div>
-
-          {/* <div>
-            <div className="text-xs font-semibold text-gray-500 mb-3 px-2 uppercase">
-              Workspaces
-            </div>
-
-            <div className="bg-white/80 rounded-xl border shadow-sm overflow-hidden">
-              <div className="flex items-center gap-3 px-3 py-2.5 border-b bg-gray-50">
-                <div className="w-8 h-8 bg-gradient-to-br from-green-500 to-teal-600 text-white flex items-center justify-center rounded-lg font-bold">
-                  T
-                </div>
-                <span className="font-semibold">Workspace</span>
-              </div>
-
-              <div className="py-1">
-                <WorkspaceItem icon={<LayoutGrid size={18} />} label="Boards" active />
-                <WorkspaceItem icon={<Users size={18} />} label="Members" />
-              </div>
-            </div>
-          </div> */}
-        </aside>
-
-        {/* ================= MAIN CONTENT – ALL CITIES ================= */}
         <main className="flex-1 px-6 md:px-12 py-10 overflow-y-auto">
-          <div className="flex flex-col gap-12 max-w-6xl mx-auto">
+          <div className="flex flex-col gap-12 max-w-7xl mx-auto">
             <section className="rounded-2xl border border-gray-200 bg-white px-6 py-5 shadow-sm">
-              <h1 className="text-2xl font-extrabold text-gray-900">Hi {profile?.first_name || "User"}</h1>
+              <h1 className="text-2xl font-extrabold text-gray-900">
+                Hi {profile?.first_name || "User"}
+              </h1>
               <p className="mt-1 text-sm text-gray-600">
                 Get started below with your designated workspace.
               </p>
-              <div className="mt-4 flex flex-wrap gap-2.5">
-                {cities.map((city) => (
-                  <span
-                    key={`workspace-${city.id}`}
-                    className="inline-flex items-center rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm font-medium text-gray-700"
-                  >
-                    {city.name}
-                  </span>
-                ))}
-              </div>
             </section>
+
+            {errorMessage && (
+              <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                {errorMessage}
+              </div>
+            )}
 
             {filteredCities.length === 0 ? (
               <div className="text-center py-20 text-gray-600 bg-white rounded-2xl shadow-sm border">
@@ -193,7 +164,6 @@ export default function UserDashboard() {
             ) : (
               filteredCities.map((city) => (
                 <section key={city.id} className="space-y-5">
-                  {/* City Header */}
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 bg-gradient-to-br from-green-500 to-teal-600 text-white rounded-lg flex items-center justify-center font-bold text-xl shadow-sm">
@@ -207,18 +177,18 @@ export default function UserDashboard() {
                         </p>
                       </div>
                     </div>
-
-                    {/* Optional: Add city-level actions here later */}
                   </div>
 
-                  {/* Boards Grid */}
                   {city.boards.length > 0 ? (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                    <div
+                      className="grid gap-6"
+                      style={{ gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}
+                    >
                       {city.boards.map((board) => (
                         <Link key={board.id} to={`/boards/${board.id}`}>
                           <BoardCard
                             title={board.name}
-                            background_gradient={board.background_gradient}
+                            backgroundGradient={board.background_gradient || null}
                           />
                         </Link>
                       ))}
@@ -226,9 +196,7 @@ export default function UserDashboard() {
                   ) : (
                     <div className="text-center py-16 text-gray-500 bg-gray-50/70 rounded-2xl border border-dashed">
                       No boards created in this city yet
-                      <div className="mt-3 text-sm">
-                        Ask your admin to add boards
-                      </div>
+                      <div className="mt-3 text-sm">Ask your admin to add boards</div>
                     </div>
                   )}
                 </section>
@@ -241,77 +209,18 @@ export default function UserDashboard() {
   );
 }
 
-/* ================= SUB COMPONENTS (unchanged except BoardCard) ================= */
-
-function TopbarLink({ label, active, onClick }: any) {
-  return (
-    <div
-      onClick={onClick}
-      className={`px-3 py-1.5 rounded-lg font-semibold cursor-pointer ${
-        active ? "bg-gray-100" : "hover:bg-gray-100"
-      }`}
-    >
-      {label}
-    </div>
-  );
+interface BoardCardProps {
+  title: string;
+  backgroundGradient?: string | null;
 }
 
-function IconCircle({ children }: any) {
-  return (
-    <button className="w-9 h-9 rounded-full hover:bg-gray-100 flex items-center justify-center">
-      {children}
-    </button>
-  );
-}
-
-function SidebarItem({ icon, label, active }: any) {
-  return (
-    <div
-      className={`flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer ${
-        active ? "bg-blue-50 text-blue-700" : "hover:bg-gray-100"
-      }`}
-    >
-      {icon}
-      {label}
-    </div>
-  );
-}
-
-function WorkspaceItem({ icon, label, active }: any) {
-  return (
-    <div
-      className={`flex items-center gap-3 px-4 py-2 cursor-pointer ${
-        active ? "bg-blue-50 text-blue-700" : "hover:bg-gray-100"
-      }`}
-    >
-      {icon}
-      {label}
-    </div>
-  );
-}
-
-function WorkspaceButton({ icon, label, active }: any) {
-  return (
-    <button
-      className={`flex items-center gap-2 px-3 py-1.5 rounded-md font-medium ${
-        active ? "bg-gray-200" : "bg-gray-100 hover:bg-gray-200"
-      }`}
-    >
-      {icon}
-      {label}
-    </button>
-  );
-}
-
-function BoardCard({ title, background_gradient }: any) {
+function BoardCard({ title, backgroundGradient }: BoardCardProps) {
   const defaultGradient = "linear-gradient(135deg, #667eea, #764ba2)";
+
   return (
-    <div className="h-44 rounded-2xl overflow-hidden shadow border hover:shadow-lg transition-all duration-200 group">
-      <div
-        className="h-32"
-        style={{ background: background_gradient || defaultGradient }}
-      />
-      <div className="p-4 bg-white font-medium text-gray-800 group-hover:text-blue-700 transition-colors">
+    <div className="h-40 rounded-2xl overflow-hidden shadow border hover:shadow-lg transition-all duration-200 group bg-white">
+      <div className="h-24" style={{ background: backgroundGradient || defaultGradient }} />
+      <div className="p-4 font-medium text-gray-800 group-hover:text-blue-700 transition-colors">
         {title}
       </div>
     </div>

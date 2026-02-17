@@ -12,7 +12,30 @@
   }
 
   body {
-    @apply relative text-base font-normal z-1 bg-gray-50 font-outfit;
+    @apply relative z-1 bg-gray-50 text-base font-normal;
+    font-family: "Inter", sans-serif;
+  }
+
+  h1,
+  h2 {
+    @apply font-extrabold;
+  }
+
+  h3,
+  h4,
+  h5,
+  h6 {
+    @apply font-bold;
+  }
+
+  p,
+  span,
+  button,
+  input,
+  textarea,
+  select,
+  label {
+    @apply font-normal;
   }
 }
 
@@ -150,11 +173,11 @@
   @apply !-translate-y-24;
 }
 #chartTwo .apexcharts-datalabels-group .apexcharts-text {
-  @apply !fill-gray-800 !font-semibold dark:!fill-white/90;
+  @apply !fill-gray-800 !font-bold dark:!fill-white/90;
 }
 
 #chartDarkStyle .apexcharts-datalabels-group .apexcharts-text {
-  @apply !fill-gray-800 !font-semibold dark:!fill-white/90;
+  @apply !fill-gray-800 !font-bold dark:!fill-white/90;
 }
 
 #chartSixteen .apexcharts-legend {

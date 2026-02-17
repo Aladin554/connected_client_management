@@ -4,6 +4,7 @@ import api from "../../../api/axios";
 import "react-datepicker/dist/react-datepicker.css";
 import type { Activity, Card, CardMember, Profile } from "./types";
 import { DESCRIPTION_TEMPLATE, formatDateWithOrdinal, formatFileSize, formatISODateForInput, formatTimestamp } from "./utils";
+import { Globe, Tag, CalendarDays } from 'lucide-react';
 
 const LazyDatePicker = lazy(() => import("react-datepicker"));
 interface CardDetailModalProps {
@@ -548,7 +549,7 @@ export default function CardDetailModal({
   };
   const getIntakeName = () => intakes.find((i) => i.id === selectedIntakeId)?.name || "Intake";
   const getServiceAreaName = () => {
-    if (selectedServiceAreaIds.length === 0) return "Service";
+    if (selectedServiceAreaIds.length === 0) return "Extra Service";
     const names = selectedServiceAreaIds
       .map((id) => serviceAreas.find((serviceArea) => serviceArea.id === id)?.name)
       .filter((name): name is string => Boolean(name));
@@ -605,7 +606,7 @@ export default function CardDetailModal({
         {/* HEADER */}
         <div className="px-6 py-4 border-b bg-gradient-to-r from-indigo-50/60 to-white flex items-start justify-between gap-6">
           <div className="flex-1 min-w-0 space-y-1">
-            <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-indigo-100/80 text-indigo-800 rounded-lg text-sm font-semibold border border-indigo-200 shadow-sm">
+            <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-indigo-100/80 text-indigo-800 rounded-lg text-sm font-bold border border-indigo-200 shadow-sm">
               {listTitle}
             </div>
           </div>
@@ -698,50 +699,59 @@ export default function CardDetailModal({
         <div className="flex flex-1 overflow-hidden">
           {/* LEFT – Main info */}
           <div className="flex-1 overflow-y-auto p-6 space-y-7 bg-white">
-            <div className="flex items-start gap-3">
+            <div className="flex items-start gap-3.5 pb-1">
               {/* <div className="mt-1.5 h-5 w-5 rounded-full border-2 border-gray-500 shrink-0" /> */}
-              <h2 className="text-2xl font-bold text-gray-900 truncate leading-tight">
+              <h2 className="text-2xl font-extrabold text-gray-900 truncate leading-tight">
                 {card.invoice || `ID-${card.id}`} {card.first_name} {card.last_name} • {formatDateWithOrdinal(card.created_at)}
               </h2>
             </div>
 
-            <div className="flex flex-wrap gap-1">
-              <button
-                type="button"
-                onClick={() => void handleOpenLabelModal("country")}
-                className="h-10 px-3 rounded-md bg-[#8f53c6] text-white text-sm font-medium border border-[#8f53c6] hover:brightness-95 transition"
-              >
-                {getCountryName()}
-              </button>
+            <div className="flex flex-wrap gap-1.5">
+  {/* Country */}
+  <button
+    type="button"
+    onClick={() => void handleOpenLabelModal("country")}
+    className="h-10 min-w-[100px] px-3 rounded-md bg-[#8f53c6] text-white text-sm font-bold border border-[#8f53c6] hover:brightness-95 transition flex items-center justify-center gap-1.5"
+  >
+    <Globe size={15} strokeWidth={2.2} className="text-white/90" />
+    {getCountryName()}
+  </button>
 
-              <button
-                type="button"
-                onClick={() => void handleOpenLabelModal("intake")}
-                className="h-10 px-3 rounded-md bg-[#f2b205] text-[#4a2b00] text-sm font-medium border border-[#f2b205] hover:brightness-95 transition"
-              >
-                {getIntakeName()}
-              </button>
+  {/* Intake */}
+  <button
+    type="button"
+    onClick={() => void handleOpenLabelModal("intake")}
+    className="h-10 min-w-[100px] px-3 rounded-md bg-[#f2b205] text-[#4a2b00] text-sm font-bold border border-[#f2b205] hover:brightness-95 transition flex items-center justify-center gap-1.5"
+  >
+    <Tag size={15} strokeWidth={2.2} className="text-[#4a2b00]/90" />
+    {getIntakeName()}
+  </button>
 
-              <button
-                type="button"
-                onClick={() => void handleOpenLabelModal("serviceArea")}
-                className="h-10 px-3 rounded-md bg-[#d63a3a] text-white text-sm font-medium border border-[#d63a3a] hover:brightness-95 transition"
-              >
-                {getServiceAreaName()}
-              </button>
-              <button
-                onClick={handleDatesButtonClick}
-                className="h-10 px-3 rounded-md bg-[#4f46e5] text-white text-sm font-medium border border-[#4f46e5] hover:brightness-95 transition flex items-center gap-1.5"
-              >
-                <Calendar size={16} className="text-white/90" />
-                {card.due_date ? formatDateWithOrdinal(card.due_date) : "Due Dates"}
-              </button>
-            </div>
+  {/* Service Area */}
+  <button
+    type="button"
+    onClick={() => void handleOpenLabelModal("serviceArea")}
+    className="h-10 px-3 rounded-md bg-[#d63a3a] text-white text-sm font-bold border border-[#d63a3a] hover:brightness-95 transition flex items-center gap-1.5"
+  >
+    <Plus size={14} className="text-white/90" />
+    {getServiceAreaName()}
+  </button>
+
+  {/* Due Date */}
+  <button
+    type="button"
+    onClick={handleDatesButtonClick}
+    className="h-10 px-3 rounded-md bg-[#4f46e5] text-white text-sm font-bold border border-[#4f46e5] hover:brightness-95 transition flex items-center gap-1.5"
+  >
+    <CalendarDays size={15} strokeWidth={2.2} className="text-white/90" />
+    {card.due_date ? formatDateWithOrdinal(card.due_date) : "Due Dates"}
+  </button>
+</div>
 
             {/* Members + Labels + Meta */}
             <div className="space-y-6">
               <div>
-                <p className="text-sm font-semibold text-gray-700 mb-2.5">Members</p>
+                <p className="text-sm font-bold text-gray-700 mb-2.5">Members</p>
                 <div className="flex items-center gap-2">
                   {memberPreview.slice(0, 3).map((member) => (
                     <button
@@ -772,7 +782,7 @@ export default function CardDetailModal({
               <div className="flex items-center justify-between px-5 py-3.5 border-b bg-white/60">
                 <div className="flex items-center gap-2.5">
                   <MessageSquare size={18} className="text-indigo-600" />
-                  <h3 className="font-semibold text-gray-800">Description</h3>
+                  <h3 className="font-bold text-gray-800">Description</h3>
                 </div>
 
                 {isEditingDescription ? (
@@ -791,7 +801,7 @@ export default function CardDetailModal({
                     </button>
                     <button
                       onClick={handleSaveDescription}
-                      className={`px-5 py-1.5 text-sm font-medium rounded text-white ${
+                      className={`px-5 py-1.5 text-sm font-bold rounded text-white ${
                         savingDescription ? "bg-indigo-400 cursor-not-allowed" : "bg-indigo-600 hover:bg-indigo-700"
                       }`}
                       disabled={savingDescription}
@@ -802,7 +812,7 @@ export default function CardDetailModal({
                 ) : (
                   <button
                     onClick={openDescriptionEditor}
-                    className="flex items-center gap-1.5 text-sm text-indigo-600 hover:text-indigo-800 font-medium transition"
+                    className="flex items-center gap-1.5 text-sm text-indigo-600 hover:text-indigo-800 font-bold transition"
                   >
                     <SquarePen size={14} />
                     Edit
@@ -844,14 +854,14 @@ export default function CardDetailModal({
           {/* RIGHT – Comments & Activity */}
           <div className="w-full sm:w-[360px] bg-gray-50 border-l border-gray-200 flex flex-col overflow-hidden">
             <div className="px-5 py-4 border-b bg-white/80 flex items-center justify-between">
-              <h3 className="font-semibold text-gray-800">Comments & Activity</h3>
+              <h3 className="font-bold text-gray-800">Comments & Activity</h3>
               <button
                 type="button"
                 onClick={() => setShowActivitySummary(true)}
                 className="inline-flex items-center gap-1.5 text-sm px-3 py-1.5 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition"
               >
                 <BarChart3 size={14} />
-                Activity Summary
+                 Summary
               </button>
             </div>
 
@@ -895,7 +905,7 @@ export default function CardDetailModal({
 
                 {commentAttachment && (
                   <div className="text-xs text-gray-600 bg-white border border-gray-200 rounded-lg px-3 py-2">
-                    <span className="font-medium">{commentAttachment.name}</span>
+                    <span className="font-bold">{commentAttachment.name}</span>
                     <span className="ml-2 text-gray-500">{formatFileSize(commentAttachment.size)}</span>
                   </div>
                 )}
@@ -903,7 +913,7 @@ export default function CardDetailModal({
                 <button
                   onClick={handlePostComment}
                   disabled={postingComment || (!newComment.trim() && !commentAttachment)}
-                  className={`w-full py-2 text-sm font-medium rounded-lg text-white ${
+                  className={`w-full py-2 text-sm font-bold rounded-lg text-white ${
                     postingComment ? "bg-indigo-400 cursor-not-allowed" : "bg-indigo-600 hover:bg-indigo-700"
                   }`}
                 >
@@ -972,7 +982,7 @@ export default function CardDetailModal({
         <div className="fixed inset-0 bg-black/45 z-[65] flex items-center justify-center p-4">
           <div className="w-full max-w-md rounded-2xl border border-gray-200 bg-white shadow-2xl overflow-hidden">
             <div className="px-5 py-4 border-b bg-gray-50 flex items-center justify-between">
-              <h4 className="text-base font-semibold text-gray-900">Activity Summary</h4>
+              <h4 className="text-base font-bold text-gray-900">Activity Summary</h4>
               <button
                 type="button"
                 onClick={() => setShowActivitySummary(false)}
@@ -984,22 +994,22 @@ export default function CardDetailModal({
 
             <div className="p-5 space-y-3 text-sm text-gray-700">
               <p>
-                <span className="font-semibold text-gray-900">Total activities:</span> {activitySummary.total}
+                <span className="font-bold text-gray-900">Total activities:</span> {activitySummary.total}
               </p>
               <p>
-                <span className="font-semibold text-gray-900">Comments:</span> {activitySummary.comments}
+                <span className="font-bold text-gray-900">Comments:</span> {activitySummary.comments}
               </p>
               <p>
-                <span className="font-semibold text-gray-900">Attachments:</span> {activitySummary.attachments}
+                <span className="font-bold text-gray-900">Attachments:</span> {activitySummary.attachments}
               </p>
               <p>
-                <span className="font-semibold text-gray-900">Label updates:</span> {activitySummary.labelUpdates}
+                <span className="font-bold text-gray-900">Label updates:</span> {activitySummary.labelUpdates}
               </p>
               <p>
-                <span className="font-semibold text-gray-900">Payment updates:</span> {activitySummary.paymentUpdates}
+                <span className="font-bold text-gray-900">Payment updates:</span> {activitySummary.paymentUpdates}
               </p>
               <p>
-                <span className="font-semibold text-gray-900">Last activity:</span>{" "}
+                <span className="font-bold text-gray-900">Last activity:</span>{" "}
                 {activitySummary.latestAt ? formatTimestamp(activitySummary.latestAt) : "No activity yet"}
               </p>
             </div>
@@ -1008,7 +1018,7 @@ export default function CardDetailModal({
               <button
                 type="button"
                 onClick={() => setShowActivitySummary(false)}
-                className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700"
+                className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-bold hover:bg-indigo-700"
               >
                 Close
               </button>
@@ -1022,7 +1032,7 @@ export default function CardDetailModal({
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-900">Select Due Date</h3>
+              <h3 className="text-lg font-bold text-gray-900">Select Due Date</h3>
               <button
                 onClick={() => setShowDatePicker(false)}
                 className="text-gray-500 hover:text-gray-700"
@@ -1070,7 +1080,7 @@ export default function CardDetailModal({
               </button>
               <button
                 onClick={handleSaveDueDate}
-                className={`px-6 py-2 text-sm font-medium text-white rounded-lg ${
+                className={`px-6 py-2 text-sm font-bold text-white rounded-lg ${
                   savingDueDate ? "bg-indigo-400 cursor-not-allowed" : "bg-indigo-600 hover:bg-indigo-700"
                 }`}
                 disabled={savingDueDate}
@@ -1144,7 +1154,7 @@ export default function CardDetailModal({
                               className="h-4 w-4 rounded text-indigo-600"
                             />
                             <div className="min-w-0">
-                              <p className="text-sm font-medium text-gray-900 truncate">
+                              <p className="text-sm font-bold text-gray-900 truncate">
                                 {getMemberDisplayName(member)}
                               </p>
                               {member.email ? (
@@ -1171,7 +1181,7 @@ export default function CardDetailModal({
                 <button
                   onClick={handleSaveMembers}
                   disabled={membersSaving || membersLoading}
-                  className={`px-6 py-2.5 rounded-lg text-white font-medium ${
+                  className={`px-6 py-2.5 rounded-lg text-white font-bold ${
                     membersSaving || membersLoading
                       ? "bg-indigo-400 cursor-not-allowed"
                       : "bg-indigo-600 hover:bg-indigo-700"
@@ -1208,7 +1218,7 @@ export default function CardDetailModal({
                     <button
                       type="button"
                       onClick={() => void handleOpenLabelModal("country")}
-                      className={`px-3 py-1.5 rounded-md text-sm font-semibold border transition ${
+                      className={`px-3 py-1.5 rounded-md text-sm font-bold border transition ${
                         activeLabelType === "country"
                           ? "bg-[#8f53c6] text-white border-[#8f53c6]"
                           : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
@@ -1219,7 +1229,7 @@ export default function CardDetailModal({
                     <button
                       type="button"
                       onClick={() => void handleOpenLabelModal("intake")}
-                      className={`px-3 py-1.5 rounded-md text-sm font-semibold border transition ${
+                      className={`px-3 py-1.5 rounded-md text-sm font-bold border transition ${
                         activeLabelType === "intake"
                           ? "bg-[#f2b205] text-[#4a2b00] border-[#f2b205]"
                           : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
@@ -1230,7 +1240,7 @@ export default function CardDetailModal({
                     <button
                       type="button"
                       onClick={() => void handleOpenLabelModal("serviceArea")}
-                      className={`px-3 py-1.5 rounded-md text-sm font-semibold border transition ${
+                      className={`px-3 py-1.5 rounded-md text-sm font-bold border transition ${
                         activeLabelType === "serviceArea"
                           ? "bg-[#d63a3a] text-white border-[#d63a3a]"
                           : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
@@ -1242,7 +1252,7 @@ export default function CardDetailModal({
 
                   {activeLabelType === "country" ? (
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <label className="block text-sm font-bold text-gray-700 mb-2">
                         Country (multi-select)
                       </label>
                       <div className="max-h-64 overflow-y-auto border border-gray-200 rounded-lg divide-y">
@@ -1273,7 +1283,7 @@ export default function CardDetailModal({
                     </div>
                   ) : activeLabelType === "intake" ? (
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Intake / Semester</label>
+                      <label className="block text-sm font-bold text-gray-700 mb-2">Intake / Semester</label>
                       <select
                         value={selectedIntakeId ?? ""}
                         onChange={(e) => setSelectedIntakeId(e.target.value ? Number(e.target.value) : null)}
@@ -1289,7 +1299,7 @@ export default function CardDetailModal({
                     </div>
                   ) : (
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <label className="block text-sm font-bold text-gray-700 mb-2">
                         Service Area (multi-select)
                       </label>
                       <div className="max-h-64 overflow-y-auto border border-gray-200 rounded-lg divide-y">
@@ -1335,7 +1345,7 @@ export default function CardDetailModal({
               </button>
               <button
                 onClick={handleSaveLabels}
-                className="px-6 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium"
+                className="px-6 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold"
               >
                 Save
               </button>
@@ -1346,3 +1356,5 @@ export default function CardDetailModal({
     </div>
   );
 }
+
+

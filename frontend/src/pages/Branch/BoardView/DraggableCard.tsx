@@ -54,7 +54,7 @@ export default function DraggableCard({
         </div>
 
         {(previewLabelBadges.length > 0 || (card.members && card.members.length > 0)) && (
-          <div className="mt-2 flex w-full items-start gap-2">
+          <div className="mt-3 flex w-full items-start gap-2">
             {previewLabelBadges.length > 0 ? (
               <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
                 <Tag size={12} className="text-gray-500" />

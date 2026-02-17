@@ -1,4 +1,4 @@
-// src/pages/Dashboard/AdminCities.tsx
+﻿// src/pages/Dashboard/AdminCities.tsx
 import { useEffect, useState } from "react";
 import api from "../../../api/axios";
 import { Plus, Edit, Trash2, X } from "lucide-react";
@@ -8,6 +8,7 @@ import "react-toastify/dist/ReactToastify.css";
 interface BoardList {
   id: number;
   title: string;
+  category?: number;
 }
 
 interface Board {
@@ -39,6 +40,30 @@ interface User {
   boards?: Board[];
   board_lists?: BoardList[]; // backend uses snake_case
 }
+
+const CATEGORY_META: { id: number; label: string; chipClass: string }[] = [
+  {
+    id: 0,
+    label: "Admission",
+    chipClass:
+      "bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-700",
+  },
+  {
+    id: 1,
+    label: "Visa",
+    chipClass:
+      "bg-blue-100 text-blue-800 border-blue-300 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-700",
+  },
+  {
+    id: 2,
+    label: "Dependant Visa",
+    chipClass:
+      "bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-700",
+  },
+];
+
+const getCategoryId = (list: BoardList): number =>
+  [0, 1, 2].includes(Number(list.category)) ? Number(list.category) : 0;
 
 export default function AdminCities() {
   const [cities, setCities] = useState<City[]>([]);
@@ -139,7 +164,13 @@ export default function AdminCities() {
     setSelectedListIds([]);
   };
 
-  // ── Permission Toggles ───────────────────────────────────────
+  const selectedUserData = users.find((u) => u.id === selectedUser);
+  const selectedCities = cities.filter((city) => selectedCityIds.includes(city.id));
+  const selectedBoards = cities
+    .flatMap((city) => city.boards)
+    .filter((board) => selectedBoardIds.includes(board.id));
+
+  // -- Permission Toggles ---------------------------------------
 
   const toggleCity = (cityId: number) => {
     setSelectedCityIds((prev) => {
@@ -209,7 +240,7 @@ export default function AdminCities() {
     }
   };
 
-  // ── City CRUD ─────────────────────────────────────────────────
+  // -- City CRUD -------------------------------------------------
 
   const openAddCity = () => {
     setEditingCity(null);
@@ -288,14 +319,14 @@ export default function AdminCities() {
     );
   };
 
-  const formatDate = (date?: string) => (date ? new Date(date).toLocaleDateString() : "—");
+  const formatDate = (date?: string) => (date ? new Date(date).toLocaleDateString() : "-");
 
   if (loading) {
     return <div className="p-10 text-center text-gray-500">Loading cities & users...</div>;
   }
 
   return (
-    <div className="p-5 lg:p-6 bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 max-w-[1100px] mx-auto">
+    <div className="p-5 lg:p-6 bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 max-w-[1260px] mx-auto">
       <ToastContainer position="top-right" autoClose={3000} theme="colored" />
 
       {/* Header */}
@@ -312,163 +343,208 @@ export default function AdminCities() {
       </div>
 
       {/* Permission Assignment Panel */}
-      <div className="mb-10 p-5 border rounded-xl bg-gray-50/50 dark:bg-gray-800/40 dark:border-gray-700">
-        <h2 className="text-lg font-semibold mb-4 text-gray-800 dark:text-gray-200">
-          Assign Permissions
-        </h2>
+      <div className="mb-10 p-6 border rounded-2xl bg-gradient-to-b from-gray-50 to-white dark:from-gray-800/70 dark:to-gray-900 dark:border-gray-700 shadow-sm">
+  <h2 className="text-lg font-semibold mb-5 text-gray-800 dark:text-gray-200">
+    Assign Permissions
+  </h2>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-6">
-          <div>
-            <label className="block mb-1.5 font-medium text-gray-700 dark:text-gray-300">
-              Role
-            </label>
-            <select
-              value={selectedRole}
-              onChange={(e) => setSelectedRole(Number(e.target.value) || "")}
-              className="w-full px-4 py-2.5 border rounded-lg dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200 focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="">— Select Role —</option>
-              {roles.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.name}
-                </option>
-              ))}
-            </select>
-          </div>
+  {/* ================= ROLE & USER ================= */}
+  <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-6">
+    <div>
+      <label className="block mb-1.5 font-medium text-gray-700 dark:text-gray-300">
+        Role
+      </label>
+      <select
+        value={selectedRole}
+        onChange={(e) => setSelectedRole(Number(e.target.value) || "")}
+        className="w-full px-4 py-2.5 border rounded-lg dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200 focus:ring-2 focus:ring-blue-500"
+      >
+        <option value="">- Select Role -</option>
+        {roles.map((r) => (
+          <option key={r.id} value={r.id}>
+            {r.name}
+          </option>
+        ))}
+      </select>
+    </div>
 
-          {selectedRole && (
-            <div>
-              <label className="block mb-1.5 font-medium text-gray-700 dark:text-gray-300">
-                User
-              </label>
-              <select
-                value={selectedUser}
-                onChange={(e) => setSelectedUser(Number(e.target.value) || "")}
-                className="w-full px-4 py-2.5 border rounded-lg dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200 focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="">— Select User —</option>
-                {filteredUsers.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.first_name} {u.last_name} • {u.email}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
+    {selectedRole && (
+      <div>
+        <label className="block mb-1.5 font-medium text-gray-700 dark:text-gray-300">
+          User
+        </label>
+        <select
+          value={selectedUser}
+          onChange={(e) => setSelectedUser(Number(e.target.value) || "")}
+          className="w-full px-4 py-2.5 border rounded-lg dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200 focus:ring-2 focus:ring-blue-500"
+        >
+          <option value="">- Select User -</option>
+          {filteredUsers.map((u) => (
+            <option key={u.id} value={u.id}>
+              {u.first_name} {u.last_name} - {u.email}
+            </option>
+          ))}
+        </select>
+      </div>
+    )}
+  </div>
+
+  {selectedUser && (
+    <div className="space-y-6">
+      {/* ================= CITIES ================= */}
+      <section className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-semibold text-gray-900 dark:text-gray-100">
+           Cities
+          </h3>
+          <span className="text-xs px-2 py-1 rounded bg-blue-100 text-blue-800 dark:bg-blue-950/40 dark:text-blue-300">
+            {selectedCityIds.length} selected
+          </span>
         </div>
 
-        {selectedUser && (
-          <div className="space-y-7">
-            {/* Cities */}
-            <div>
-              <h3 className="font-medium mb-2.5 text-gray-800 dark:text-gray-200">Cities</h3>
-              <div className="flex flex-wrap gap-2.5">
-                {cities.map((city) => (
-                  <label
-                    key={city.id}
-                    className={`flex items-center gap-2 px-4 py-2 border rounded-lg cursor-pointer text-sm transition-all ${
-                      selectedCityIds.includes(city.id)
-                        ? "bg-blue-100 border-blue-400 dark:bg-blue-950/50 dark:border-blue-600"
-                        : "hover:bg-gray-100 dark:hover:bg-gray-800 border-gray-300 dark:border-gray-600"
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedCityIds.includes(city.id)}
-                      onChange={() => toggleCity(city.id)}
-                      className="h-4 w-4 rounded text-blue-600"
-                    />
-                    <span className="font-medium">{city.name}</span>
-                    <span className="text-xs text-gray-500 dark:text-gray-400">
-                      ({city.boards.length})
-                    </span>
-                  </label>
-                ))}
-              </div>
-            </div>
+        <div className="flex flex-wrap gap-2 max-h-60 overflow-y-auto">
+          {cities.map((city) => (
+            <label
+              key={city.id}
+              className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm cursor-pointer transition ${
+                selectedCityIds.includes(city.id)
+                  ? "border-blue-400 bg-blue-50 text-blue-800 dark:border-blue-600 dark:bg-blue-950/40 dark:text-blue-200"
+                  : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+              }`}
+            >
+              {city.name}
+              <input
+                type="checkbox"
+                checked={selectedCityIds.includes(city.id)}
+                onChange={() => toggleCity(city.id)}
+                className="h-4 w-4 rounded text-blue-600"
+              />
+            </label>
+          ))}
+        </div>
+      </section>
 
-            {/* Boards */}
-            {selectedCityIds.length > 0 && (
-              <div>
-                <h3 className="font-medium mb-2.5 text-gray-800 dark:text-gray-200">Boards</h3>
-                {cities
-                  .filter((c) => selectedCityIds.includes(c.id))
-                  .map((city) => (
-                    <div key={city.id} className="mb-5 pl-4 border-l-2 border-gray-200 dark:border-gray-700">
-                      <p className="font-medium text-gray-700 dark:text-gray-300 mb-2">
-                        {city.name}
-                      </p>
-                      <div className="flex flex-wrap gap-2.5">
-                        {city.boards.map((board) => (
-                          <label
-                            key={board.id}
-                            className={`flex items-center gap-2 px-4 py-2 border rounded-lg cursor-pointer text-sm transition-all ${
-                              selectedBoardIds.includes(board.id)
-                                ? "bg-indigo-100 border-indigo-400 dark:bg-indigo-950/50 dark:border-indigo-600"
-                                : "hover:bg-gray-100 dark:hover:bg-gray-800 border-gray-300 dark:border-gray-600"
-                            }`}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={selectedBoardIds.includes(board.id)}
-                              onChange={() => toggleBoard(board.id)}
-                              className="h-4 w-4 rounded text-indigo-600"
-                            />
-                            <span>{board.name}</span>
-                          </label>
-                        ))}
-                      </div>
-                    </div>
+      {/* ================= BOARDS ================= */}
+      {selectedCities.length > 0 && (
+        <section className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-semibold text-gray-900 dark:text-gray-100">
+              Boards
+            </h3>
+            <span className="text-xs px-2 py-1 rounded bg-indigo-100 text-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-300">
+              {selectedBoardIds.length} selected
+            </span>
+          </div>
+
+          <div className="space-y-5">
+            {selectedCities.map((city) => (
+              <div key={city.id}>
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">
+                  {city.name}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {city.boards.map((board) => (
+                    <label
+                      key={board.id}
+                      className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm cursor-pointer transition ${
+                        selectedBoardIds.includes(board.id)
+                          ? "border-indigo-400 bg-indigo-50 text-indigo-800 dark:border-indigo-600 dark:bg-indigo-950/40 dark:text-indigo-200"
+                          : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+                      }`}
+                    >
+                      {board.name}
+                      <input
+                        type="checkbox"
+                        checked={selectedBoardIds.includes(board.id)}
+                        onChange={() => toggleBoard(board.id)}
+                        className="h-4 w-4 rounded text-indigo-600"
+                      />
+                    </label>
                   ))}
+                </div>
               </div>
-            )}
+            ))}
+          </div>
+        </section>
+      )}
 
-            {/* Lists */}
-            {selectedBoardIds.length > 0 && (
-              <div>
-                <h3 className="font-medium mb-2.5 text-gray-800 dark:text-gray-200">Lists</h3>
-                {cities
-                  .flatMap((c) => c.boards)
-                  .filter((b) => selectedBoardIds.includes(b.id))
-                  .map((board) => (
-                    <div key={board.id} className="mb-5 pl-8">
-                      <p className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-1.5">
-                        {board.name}
-                      </p>
-                      <div className="flex flex-wrap gap-2.5">
-                        {(board.lists || []).map((list) => (
+      {/* ================= LISTS (PER BOARD CARD) ================= */}
+      {selectedBoards.length > 0 && (
+        <div className="space-y-5">
+          {selectedBoards.map((board) => (
+            <section
+              key={board.id}
+              className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-5"
+            >
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-semibold text-gray-900 dark:text-gray-100">
+                  {board.name}
+                </h3>
+                <span className="text-xs px-2 py-1 rounded bg-purple-100 text-purple-800 dark:bg-purple-950/40 dark:text-purple-300">
+                  {(board.lists || []).filter((l) =>
+                    selectedListIds.includes(l.id)
+                  ).length}{" "}
+                  selected
+                </span>
+              </div>
+
+              <div className="space-y-4">
+                {CATEGORY_META.map((category) => {
+                  const lists = (board.lists || []).filter(
+                    (l) => getCategoryId(l) === category.id
+                  );
+                  if (!lists.length) return null;
+
+                  return (
+                    <div key={category.id}>
+                      <span
+                        className={`inline-flex items-center px-2.5 py-1 rounded-md border text-[11px] font-semibold mb-2 ${category.chipClass}`}
+                      >
+                        {category.label}
+                      </span>
+
+                      <div className="flex flex-wrap gap-2">
+                        {lists.map((list) => (
                           <label
                             key={list.id}
-                            className={`flex items-center gap-2 px-4 py-2 border rounded-lg cursor-pointer text-sm transition-all ${
+                            className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm cursor-pointer transition ${
                               selectedListIds.includes(list.id)
-                                ? "bg-purple-100 border-purple-400 dark:bg-purple-950/50 dark:border-purple-600"
-                                : "hover:bg-gray-100 dark:hover:bg-gray-800 border-gray-300 dark:border-gray-600"
+                                ? "border-purple-400 bg-purple-50 text-purple-800 dark:border-purple-600 dark:bg-purple-950/40 dark:text-purple-200"
+                                : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
                             }`}
                           >
+                            {list.title}
                             <input
                               type="checkbox"
                               checked={selectedListIds.includes(list.id)}
                               onChange={() => toggleList(list.id)}
                               className="h-4 w-4 rounded text-purple-600"
                             />
-                            <span>{list.title}</span>
                           </label>
                         ))}
                       </div>
                     </div>
-                  ))}
+                  );
+                })}
               </div>
-            )}
+            </section>
+          ))}
+        </div>
+      )}
 
-            <button
-              onClick={savePermissions}
-              className="px-6 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium transition"
-            >
-              Save Permissions
-            </button>
-          </div>
-        )}
+      {/* ================= SAVE ================= */}
+      <div className="flex justify-end pt-2">
+        <button
+          onClick={savePermissions}
+          className="px-7 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium shadow-sm transition"
+        >
+          Save Permissions
+        </button>
       </div>
+    </div>
+  )}
+</div>
+
 
       {/* Cities Table */}
       <div className="overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-700">
@@ -637,3 +713,4 @@ export default function AdminCities() {
     </div>
   );
 }
+

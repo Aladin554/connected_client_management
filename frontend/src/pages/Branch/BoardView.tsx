@@ -1,8 +1,19 @@
-import { Dispatch, SetStateAction, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Dispatch,
+  MouseEvent,
+  SetStateAction,
+  WheelEvent,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   Activity,
   Archive,
+  ChevronDown,
   Filter,
   MessageSquare,
   LayoutGrid,
@@ -12,6 +23,9 @@ import {
   X,
 } from "lucide-react";
 import {
+  closestCenter,
+  closestCorners,
+  CollisionDetection,
   DndContext,
   DragEndEvent,
   DragOverlay,
@@ -21,7 +35,12 @@ import {
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
-import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import {
+  SortableContext,
+  arrayMove,
+  horizontalListSortingStrategy,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
 import Loader from "../Loader/Loader";
 import api from "../../api/axios";
 import { getMeCached } from "../../utils/me";
@@ -40,6 +59,7 @@ export default function BoardView() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [selectedCard, setSelectedCard] = useState<Card | null>(null);
   const [activeCard, setActiveCard] = useState<Card | null>(null);
+  const [activeListId, setActiveListId] = useState<number | null>(null);
 
   const [isAddListOpen, setIsAddListOpen] = useState(false);
   const [newListTitle, setNewListTitle] = useState("");
@@ -73,6 +93,7 @@ export default function BoardView() {
   const [selectedIntakeFilterIds, setSelectedIntakeFilterIds] = useState<number[]>([]);
   const [selectedServiceAreaFilterIds, setSelectedServiceAreaFilterIds] = useState<number[]>([]);
   const [dueDateFilter, setDueDateFilter] = useState<"all" | "today" | "this_week" | "overdue">("all");
+  const [openMultiSelectFilter, setOpenMultiSelectFilter] = useState<"country" | "intake" | null>(null);
   const [countryFilterOptions, setCountryFilterOptions] = useState<LabelOption[]>([]);
   const [intakeFilterOptions, setIntakeFilterOptions] = useState<LabelOption[]>([]);
   const [serviceAreaFilterOptions, setServiceAreaFilterOptions] = useState<LabelOption[]>([]);
@@ -82,6 +103,12 @@ export default function BoardView() {
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const filterSearchInputRef = useRef<HTMLInputElement | null>(null);
   const filterMenuRef = useRef<HTMLDivElement | null>(null);
+  const boardScrollRef = useRef<HTMLDivElement | null>(null);
+  const boardPanStartRef = useRef<{
+    x: number;
+    scrollLeft: number;
+  } | null>(null);
+  const [isBoardPanning, setIsBoardPanning] = useState(false);
   const deferredSearchTerm = useDeferredValue(searchTerm.trim().toLowerCase());
   const isSearching = deferredSearchTerm.length > 0;
   const showWildcardMatchCounts = deferredSearchTerm === "*";
@@ -99,7 +126,24 @@ export default function BoardView() {
     setter((prev) => (prev.includes(id) ? prev.filter((itemId) => itemId !== id) : [...prev, id]));
   };
 
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+  const getMultiFilterSummary = (
+    selectedIds: number[],
+    options: LabelOption[],
+    placeholder: string
+  ) => {
+    if (selectedIds.length === 0) return placeholder;
+
+    const selectedNames = options
+      .filter((option) => selectedIds.includes(option.id))
+      .map((option) => option.name);
+
+    if (selectedNames.length === 0) return `${selectedIds.length} selected`;
+    if (selectedNames.length <= 2) return selectedNames.join(", ");
+
+    return `${selectedNames.slice(0, 2).join(", ")} +${selectedNames.length - 2}`;
+  };
+
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 2 } }));
 
   const fetchBoard = async () => {
     try {
@@ -330,9 +374,41 @@ export default function BoardView() {
   }, [showFilterMenu]);
 
   useEffect(() => {
+    if (!showFilterMenu) {
+      setOpenMultiSelectFilter(null);
+    }
+  }, [showFilterMenu]);
+
+  useEffect(() => {
     if (!showActivityModal) return;
     void fetchBoardActivities(activityTab);
   }, [showActivityModal, activityTab, boardId]);
+
+  useEffect(() => {
+    if (!isBoardPanning) return;
+
+    const onMouseMove = (event: globalThis.MouseEvent) => {
+      const start = boardPanStartRef.current;
+      const container = boardScrollRef.current;
+      if (!start || !container) return;
+
+      const deltaX = event.clientX - start.x;
+      container.scrollLeft = start.scrollLeft - deltaX;
+    };
+
+    const stopPan = () => {
+      setIsBoardPanning(false);
+      boardPanStartRef.current = null;
+    };
+
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", stopPan);
+
+    return () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", stopPan);
+    };
+  }, [isBoardPanning]);
 
   const getListTitleForCard = (card: Card): string => {
     if (!board) return "Unknown";
@@ -534,6 +610,7 @@ export default function BoardView() {
   };
 
   const canEditListTitle = Number(profile?.role_id) === 1;
+  const canMoveLists = Number(profile?.role_id) === 1;
 
   const startEditListTitle = (list: List) => {
     if (!canEditListTitle || savingListId !== null) return;
@@ -615,9 +692,39 @@ export default function BoardView() {
     setActiveCardListId(null);
   };
 
+  const getListIdFromDragId = (dragId: string | number): number | null => {
+    const raw = String(dragId);
+    if (!raw.startsWith("list-")) return null;
+    const parsed = Number(raw.slice(5));
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+
+  const collisionDetection: CollisionDetection = (args) => {
+    const activeId = String(args.active.id);
+    if (activeId.startsWith("list-")) {
+      // Easier list sorting: corners react faster while moving across columns.
+      return closestCorners(args);
+    }
+    const pointerCollisions = pointerWithin(args);
+    if (pointerCollisions.length > 0) return pointerCollisions;
+    // Fallback to closest center so card-to-card move works even if pointer is slightly off.
+    return closestCenter(args);
+  };
+
   const handleDragStart = (event: DragStartEvent) => {
-    if (isSearching || hasActiveFilters) return;
     if (!board) return;
+
+    const draggingListId = getListIdFromDragId(event.active.id);
+    if (draggingListId != null) {
+      if (!canMoveLists || isSearching || hasActiveFilters) return;
+      setActiveListId(draggingListId);
+      return;
+    }
+
+    setActiveListId(null);
+
+    if (isSearching || hasActiveFilters) return;
+
     const cardId = Number(event.active.id);
     for (const list of board.lists) {
       const found = list.cards.find((c) => c.id === cardId);
@@ -629,49 +736,122 @@ export default function BoardView() {
   };
 
   const handleDragEnd = async (event: DragEndEvent) => {
-    if (isSearching || hasActiveFilters) return;
     setActiveCard(null);
+    setActiveListId(null);
     if (!board || !event.over) return;
 
-    const cardId = Number(event.active.id);
-    let fromList: List | undefined;
-    let movedCard: Card | undefined;
+    const activeListDragId = getListIdFromDragId(event.active.id);
+    const overListDragId = getListIdFromDragId(event.over.id);
 
-    for (const list of board.lists) {
-      const found = list.cards.find((c) => c.id === cardId);
-      if (found) {
-        fromList = list;
-        movedCard = found;
-        break;
+    // Reorder list columns (superadmin only).
+    if (activeListDragId != null) {
+      if (!canMoveLists || isSearching || hasActiveFilters) return;
+      if (overListDragId == null || activeListDragId === overListDragId) return;
+
+      const activeList = board.lists.find((list) => list.id === activeListDragId);
+      const overList = board.lists.find((list) => list.id === overListDragId);
+      if (!activeList || !overList) return;
+
+      const activeCategory = activeList.category ?? 0;
+      const overCategory = overList.category ?? 0;
+      if (activeCategory !== overCategory) return;
+
+      const categoryLists = board.lists
+        .filter((list) => (list.category ?? 0) === activeCategory)
+        .sort((a, b) => a.position - b.position);
+
+      const oldIndex = categoryLists.findIndex((list) => list.id === activeListDragId);
+      const newIndex = categoryLists.findIndex((list) => list.id === overListDragId);
+      if (oldIndex < 0 || newIndex < 0 || oldIndex === newIndex) return;
+
+      const reorderedCategory = [...categoryLists];
+      const [movedList] = reorderedCategory.splice(oldIndex, 1);
+      reorderedCategory.splice(newIndex, 0, movedList);
+
+      const nextPositionById = reorderedCategory.reduce<Record<number, number>>((acc, list, index) => {
+        acc[list.id] = index + 1;
+        return acc;
+      }, {});
+
+      const previousBoardState: Board = {
+        ...board,
+        lists: board.lists.map((list) => ({
+          ...list,
+          cards: list.cards.map((card) => ({ ...card })),
+        })),
+      };
+
+      setBoard({
+        ...board,
+        lists: board.lists
+          .map((list) =>
+            nextPositionById[list.id] != null
+              ? { ...list, position: nextPositionById[list.id] }
+              : list
+          )
+          .sort((a, b) => a.position - b.position),
+      });
+
+      try {
+        await Promise.all(
+          reorderedCategory.map((list, index) =>
+            api.put(`/boards/${board.id}/lists/${list.id}`, {
+              position: index + 1,
+            })
+          )
+        );
+        await fetchBoard();
+      } catch (err) {
+        console.error("Reorder lists failed", err);
+        setBoard(previousBoardState);
+        alert("Could not reorder lists.");
+      }
+
+      return;
+    }
+
+    if (isSearching || hasActiveFilters) return;
+
+    const cardId = Number(event.active.id);
+    if (!Number.isFinite(cardId)) return;
+
+    const fromListIndex = board.lists.findIndex((list) =>
+      list.cards.some((card) => card.id === cardId)
+    );
+    if (fromListIndex < 0) return;
+
+    const fromList = board.lists[fromListIndex];
+    const fromCardIndex = fromList.cards.findIndex((card) => card.id === cardId);
+    if (fromCardIndex < 0) return;
+
+    const movedCard = fromList.cards[fromCardIndex];
+    const overId = String(event.over.id);
+
+    let toListIndex = -1;
+    let toCardIndex = -1;
+
+    if (overId.startsWith("list-")) {
+      const targetListId = Number(overId.replace("list-", ""));
+      toListIndex = board.lists.findIndex((list) => list.id === targetListId);
+      if (toListIndex >= 0) {
+        toCardIndex = board.lists[toListIndex].cards.length;
+      }
+    } else {
+      const overCardId = Number(event.over.id);
+      if (Number.isFinite(overCardId)) {
+        toListIndex = board.lists.findIndex((list) =>
+          list.cards.some((card) => card.id === overCardId)
+        );
+        if (toListIndex >= 0) {
+          toCardIndex = board.lists[toListIndex].cards.findIndex(
+            (card) => card.id === overCardId
+          );
+        }
       }
     }
 
-    if (!fromList || !movedCard) return;
-
-    let toList: List | undefined;
-
-    if (String(event.over.id).startsWith("list-")) {
-      const listId = Number(String(event.over.id).replace("list-", ""));
-      toList = board.lists.find((l) => l.id === listId);
-    } else {
-      toList = board.lists.find((l) => l.cards.some((c) => c.id === Number(event.over.id)));
-    }
-
-    if (!toList || fromList.id === toList.id) return;
-
-    const isMovingToVisa = (toList.category ?? 0) === 1;
-    if (isMovingToVisa && !movedCard.payment_done) {
-      setMoveBlockedMessage("This card is unpaid. Mark visa payment as done before moving it to Visa.");
-      return;
-    }
-
-    const isMovingToDependantVisa = (toList.category ?? 0) === 2;
-    if (isMovingToDependantVisa && !movedCard.dependant_payment_done) {
-      setMoveBlockedMessage(
-        "Dependant payment is pending. Mark dependant payment as done before moving it to Dependant Visa."
-      );
-      return;
-    }
+    if (toListIndex < 0 || toCardIndex < 0) return;
+    const toList = board.lists[toListIndex];
 
     const previousBoardState: Board = {
       ...board,
@@ -681,32 +861,130 @@ export default function BoardView() {
       })),
     };
 
-    // Optimistic UI update
-    fromList.cards = fromList.cards.filter((c) => c.id !== movedCard!.id);
-    movedCard!.position = toList.cards.length + 1;
-    toList.cards.push(movedCard!);
+    // Reorder inside the same list (drop card on card or at list end).
+    if (fromList.id === toList.id) {
+      const lastIndex = fromList.cards.length - 1;
+      const normalizedToIndex = Math.min(toCardIndex, lastIndex);
+      if (fromCardIndex === normalizedToIndex) return;
 
-    setBoard({ ...board });
+      const reorderedCards = arrayMove(
+        fromList.cards,
+        fromCardIndex,
+        normalizedToIndex
+      ).map((card, index) => ({
+        ...card,
+        position: index + 1,
+      }));
+
+      setBoard({
+        ...board,
+        lists: board.lists.map((list, index) =>
+          index === fromListIndex ? { ...list, cards: reorderedCards } : list
+        ),
+      });
+
+      try {
+        await Promise.all(
+          reorderedCards.map((card, index) =>
+            api.put(`/board-lists/${fromList.id}/cards/${card.id}`, {
+              position: index + 1,
+            })
+          )
+        );
+        await fetchBoard();
+      } catch (err) {
+        console.error("Reorder card failed", err);
+        setBoard(previousBoardState);
+      }
+
+      return;
+    }
+
+    const fromCategory = fromList.category ?? 0;
+    const toCategory = toList.category ?? 0;
+
+    const isEnteringVisaArea = fromCategory !== 1 && toCategory === 1;
+    if (isEnteringVisaArea && !movedCard.payment_done) {
+      setMoveBlockedMessage("This card is unpaid. Mark visa payment as done before moving it to Visa.");
+      return;
+    }
+
+    const isEnteringDependantVisaArea = fromCategory !== 2 && toCategory === 2;
+    if (isEnteringDependantVisaArea && !movedCard.dependant_payment_done) {
+      setMoveBlockedMessage(
+        "Dependant payment is pending. Mark dependant payment as done before moving it to Dependant Visa."
+      );
+      return;
+    }
+
+    const nextLists = board.lists.map((list) => ({
+      ...list,
+      cards: list.cards.map((card) => ({ ...card })),
+    }));
+
+    const sourceCards = nextLists[fromListIndex].cards.filter((card) => card.id !== movedCard.id);
+    const destinationCards = nextLists[toListIndex].cards;
+    const insertIndex = Math.min(Math.max(toCardIndex, 0), destinationCards.length);
+
+    destinationCards.splice(insertIndex, 0, {
+      ...movedCard,
+      board_list_id: toList.id,
+    });
+
+    nextLists[fromListIndex].cards = sourceCards.map((card, index) => ({
+      ...card,
+      position: index + 1,
+    }));
+
+    nextLists[toListIndex].cards = destinationCards.map((card, index) => ({
+      ...card,
+      board_list_id: toList.id,
+      position: index + 1,
+    }));
+
+    setBoard({
+      ...board,
+      lists: nextLists,
+    });
 
     try {
       await api.post("/cards/move", {
-        card_id: movedCard!.id,
+        card_id: movedCard.id,
         to_list_id: toList.id,
-        position: movedCard!.position,
+        position: insertIndex + 1,
       });
-      await logActivity(
-        "moved card",
-        `from ${fromList.title} to ${toList.title}`,
-        movedCard!.id
-      );
-      await fetchBoard();
     } catch (err: any) {
       setBoard(previousBoardState);
       const message = err?.response?.data?.message;
       if (typeof message === "string" && message.toLowerCase().includes("payment")) {
         setMoveBlockedMessage(message);
       }
+      return;
     }
+
+    // Best-effort position normalization for surrounding cards.
+    // If these fail due to permissions, keep the successful move and refresh from server.
+    try {
+      const sourcePositionUpdates = nextLists[fromListIndex].cards.map((card, index) =>
+        api.put(`/board-lists/${fromList.id}/cards/${card.id}`, {
+          position: card.position ?? index + 1,
+        })
+      );
+
+      const destinationPositionUpdates = nextLists[toListIndex].cards
+        .filter((card) => card.id !== movedCard.id)
+        .map((card) =>
+          api.put(`/board-lists/${toList.id}/cards/${card.id}`, {
+            position: card.position ?? 1,
+          })
+        );
+
+      await Promise.allSettled([...sourcePositionUpdates, ...destinationPositionUpdates]);
+    } catch (err) {
+      console.error("Background card position normalization failed", err);
+    }
+
+    await fetchBoard();
   };
 
   type ListWithSearchMeta = List & {
@@ -895,9 +1173,15 @@ export default function BoardView() {
         });
     };
 
-    const admissionSource = board.lists.filter((list) => (list.category ?? 0) === 0);
-    const visaSource = board.lists.filter((list) => list.category === 1);
-    const dependantVisaSource = board.lists.filter((list) => list.category === 2);
+    const admissionSource = board.lists
+      .filter((list) => (list.category ?? 0) === 0)
+      .sort((a, b) => a.position - b.position);
+    const visaSource = board.lists
+      .filter((list) => list.category === 1)
+      .sort((a, b) => a.position - b.position);
+    const dependantVisaSource = board.lists
+      .filter((list) => list.category === 2)
+      .sort((a, b) => a.position - b.position);
 
     const filteredAdmission = filterLists(admissionSource);
     const filteredVisa = filterLists(visaSource);
@@ -935,10 +1219,27 @@ export default function BoardView() {
   if (loading) return <Loader message="Loading board..." />;
   if (!board) return null;
 
-  const renderListColumn = (list: ListWithSearchMeta, canAddCard: boolean) => (
-    <DroppableList key={list.id} list={list}>
+  const renderListColumn = (list: ListWithSearchMeta, canAddCard: boolean) => {
+    const listDragDisabled = isSearching || hasActiveFilters;
+    const canDragThisList =
+      canMoveLists && !listDragDisabled && editingListId !== list.id;
+
+    return (
+    <DroppableList
+      key={list.id}
+      list={list}
+      dragDisabled={!canMoveLists || listDragDisabled}
+    >
+      {({ dragHandleProps }) => (
+        <>
       <div className="p-4 pb-2">
-        <div className="flex justify-between items-center gap-2 mb-3">
+        <div
+          className={`flex justify-between items-center gap-2 mb-3 ${
+            canDragThisList ? "cursor-grab active:cursor-grabbing select-none touch-none" : ""
+          }`}
+          {...(canDragThisList ? dragHandleProps : {})}
+          title={canDragThisList ? "Drag to reorder list" : undefined}
+        >
           {editingListId === list.id ? (
             <input
               autoFocus
@@ -963,8 +1264,8 @@ export default function BoardView() {
               className={`font-semibold text-lg truncate ${
                 canEditListTitle ? "cursor-text hover:underline underline-offset-4" : ""
               } ${isSearching && list.matchedByTitle ? "text-indigo-700" : ""}`}
-              onClick={() => startEditListTitle(list)}
-              title={canEditListTitle ? "Click to edit list title" : undefined}
+              onDoubleClick={() => startEditListTitle(list)}
+              title={canEditListTitle ? "Double-click to edit list title" : undefined}
             >
               {list.title}
             </h3>
@@ -979,16 +1280,18 @@ export default function BoardView() {
         </div>
 
         <SortableContext items={list.cards.map((c) => c.id)} strategy={verticalListSortingStrategy}>
-          <div className="space-y-3">
-            {list.cards.map((card) => (
-              <DraggableCard
-                key={card.id}
-                card={card}
-                onClick={() => setSelectedCard(card)}
-                labelBadges={getCardLabelBadges(card)}
-                dragDisabled={isSearching || hasActiveFilters}
-              />
-            ))}
+          <div className="max-h-[calc(100vh-320px)] overflow-y-auto pr-1">
+            <div className="space-y-3">
+              {list.cards.map((card) => (
+                <DraggableCard
+                  key={card.id}
+                  card={card}
+                  onClick={() => setSelectedCard(card)}
+                  labelBadges={getCardLabelBadges(card)}
+                  dragDisabled={isSearching || hasActiveFilters}
+                />
+              ))}
+            </div>
           </div>
         </SortableContext>
       </div>
@@ -1046,8 +1349,98 @@ export default function BoardView() {
       ) : (
         <div className="h-12" />
       )}
+        </>
+      )}
     </DroppableList>
-  );
+    );
+  };
+
+  const activeDraggedList =
+    activeListId != null ? board.lists.find((list) => list.id === activeListId) || null : null;
+
+  const renderListDragOverlay = (list: List) => {
+    const previewCards = list.cards.slice(0, 3);
+
+    return (
+      <div className="w-80 rounded-xl border border-gray-200 bg-white/95 backdrop-blur-sm shadow-2xl rotate-[1.2deg]">
+        <div className="p-4 pb-2">
+          <h3 className="font-semibold text-lg text-gray-900 truncate">{list.title}</h3>
+
+          <div className="mt-3 space-y-3">
+            {previewCards.length === 0 ? (
+              <div className="h-14 rounded-lg border border-dashed border-gray-300 bg-gray-50" />
+            ) : (
+              previewCards.map((card) => {
+                const cardTitle = `${card.invoice || `ID-${card.id}`} ${card.first_name || ""} ${
+                  card.last_name || ""
+                }`.trim();
+
+                return (
+                  <div
+                    key={`overlay-card-${card.id}`}
+                    className="rounded-lg border border-gray-200 bg-white px-3 py-2"
+                  >
+                    <p className="text-sm font-semibold text-indigo-700 truncate">{cardTitle}</p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      {formatDateWithOrdinal(card.created_at)}
+                    </p>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const handleBoardCanvasWheel = (event: WheelEvent<HTMLDivElement>) => {
+    const container = boardScrollRef.current;
+    if (!container) return;
+
+    const hasHorizontalOverflow = container.scrollWidth > container.clientWidth;
+    if (!hasHorizontalOverflow) return;
+
+    const hasVerticalOverflow = container.scrollHeight > container.clientHeight;
+    // If there is no vertical overflow, treat wheel as horizontal scroll.
+    // Shift + wheel also scrolls horizontally (like Trello).
+    if (!event.shiftKey && hasVerticalOverflow) return;
+
+    const delta = event.deltaX !== 0 ? event.deltaX : event.deltaY;
+    if (delta === 0) return;
+
+    container.scrollLeft += delta;
+    event.preventDefault();
+  };
+
+  const canStartBoardPan = (target: EventTarget | null) => {
+    if (!(target instanceof HTMLElement)) return false;
+
+    // Do not start board panning while interacting with controls or draggable items.
+    if (
+      target.closest(
+        "button, a, input, textarea, select, label, [role='button'], [role='dialog'], [contenteditable='true']"
+      )
+    ) {
+      return false;
+    }
+
+    return true;
+  };
+
+  const handleBoardMouseDown = (event: MouseEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    if (!canStartBoardPan(event.target)) return;
+
+    const container = boardScrollRef.current;
+    if (!container) return;
+
+    boardPanStartRef.current = {
+      x: event.clientX,
+      scrollLeft: container.scrollLeft,
+    };
+    setIsBoardPanning(true);
+  };
 
   return (
     <div className="h-screen flex flex-col bg-gray-50 overflow-hidden">
@@ -1057,13 +1450,13 @@ export default function BoardView() {
           <button
             type="button"
             onClick={() => navigate("/")}
-            className="h-8 flex items-center cursor-pointer"
+            className="h-7 flex items-center cursor-pointer"
             title="Go to home"
           >
             <img
               src="/images/logo/connected_logo.png"
               alt="Connected Logo"
-              className="h-8 w-auto object-contain"
+              className="h-7 w-auto object-contain"
             />
           </button>
           {/* <span className="font-semibold">{board.name}</span>
@@ -1126,6 +1519,7 @@ export default function BoardView() {
                       setSelectedIntakeFilterIds([]);
                       setSelectedServiceAreaFilterIds([]);
                       setDueDateFilter("all");
+                      setOpenMultiSelectFilter(null);
                     }}
                     className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
                   >
@@ -1150,24 +1544,50 @@ export default function BoardView() {
                   <label className="block text-xs font-medium text-gray-600 mb-1">
                     Country ({selectedCountryFilterIds.length})
                   </label>
-                  <div className="max-h-28 overflow-y-auto rounded-md border border-gray-300 bg-white">
-                    {countryFilterOptions.length === 0 ? (
-                      <div className="px-2.5 py-2 text-xs text-gray-500">No options</div>
-                    ) : (
-                      countryFilterOptions.map((item) => (
-                        <label
-                          key={`country-filter-${item.id}`}
-                          className="flex items-center gap-2 px-2.5 py-1.5 text-sm text-gray-800 hover:bg-gray-50 cursor-pointer"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={selectedCountryFilterIds.includes(item.id)}
-                            onChange={() => toggleFilterSelection(item.id, setSelectedCountryFilterIds)}
-                            className="h-3.5 w-3.5 rounded text-indigo-600"
-                          />
-                          <span>{item.name}</span>
-                        </label>
-                      ))
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setOpenMultiSelectFilter((prev) =>
+                          prev === "country" ? null : "country"
+                        )
+                      }
+                      className="h-9 w-full rounded-md border border-gray-300 px-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white text-gray-800 flex items-center justify-between"
+                    >
+                      <span className="truncate text-left">
+                        {getMultiFilterSummary(selectedCountryFilterIds, countryFilterOptions, "Select")}
+                      </span>
+                      <ChevronDown
+                        size={15}
+                        className={`text-gray-500 transition-transform ${
+                          openMultiSelectFilter === "country" ? "rotate-180" : ""
+                        }`}
+                      />
+                    </button>
+
+                    {openMultiSelectFilter === "country" && (
+                      <div className="absolute left-0 right-0 top-full mt-1 max-h-40 overflow-y-auto rounded-md border border-gray-300 bg-white shadow-lg z-50">
+                        {countryFilterOptions.length === 0 ? (
+                          <div className="px-2.5 py-2 text-xs text-gray-500">No options</div>
+                        ) : (
+                          countryFilterOptions.map((item) => (
+                            <label
+                              key={`country-filter-${item.id}`}
+                              className="flex items-center gap-2 px-2.5 py-1.5 text-sm text-gray-800 hover:bg-gray-50 cursor-pointer"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={selectedCountryFilterIds.includes(item.id)}
+                                onChange={() =>
+                                  toggleFilterSelection(item.id, setSelectedCountryFilterIds)
+                                }
+                                className="h-3.5 w-3.5 rounded text-indigo-600"
+                              />
+                              <span>{item.name}</span>
+                            </label>
+                          ))
+                        )}
+                      </div>
                     )}
                   </div>
                 </div>
@@ -1176,24 +1596,50 @@ export default function BoardView() {
                   <label className="block text-xs font-medium text-gray-600 mb-1">
                     Intake ({selectedIntakeFilterIds.length})
                   </label>
-                  <div className="max-h-28 overflow-y-auto rounded-md border border-gray-300 bg-white">
-                    {intakeFilterOptions.length === 0 ? (
-                      <div className="px-2.5 py-2 text-xs text-gray-500">No options</div>
-                    ) : (
-                      intakeFilterOptions.map((item) => (
-                        <label
-                          key={`intake-filter-${item.id}`}
-                          className="flex items-center gap-2 px-2.5 py-1.5 text-sm text-gray-800 hover:bg-gray-50 cursor-pointer"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={selectedIntakeFilterIds.includes(item.id)}
-                            onChange={() => toggleFilterSelection(item.id, setSelectedIntakeFilterIds)}
-                            className="h-3.5 w-3.5 rounded text-indigo-600"
-                          />
-                          <span>{item.name}</span>
-                        </label>
-                      ))
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setOpenMultiSelectFilter((prev) =>
+                          prev === "intake" ? null : "intake"
+                        )
+                      }
+                      className="h-9 w-full rounded-md border border-gray-300 px-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white text-gray-800 flex items-center justify-between"
+                    >
+                      <span className="truncate text-left">
+                        {getMultiFilterSummary(selectedIntakeFilterIds, intakeFilterOptions, "Select")}
+                      </span>
+                      <ChevronDown
+                        size={15}
+                        className={`text-gray-500 transition-transform ${
+                          openMultiSelectFilter === "intake" ? "rotate-180" : ""
+                        }`}
+                      />
+                    </button>
+
+                    {openMultiSelectFilter === "intake" && (
+                      <div className="absolute left-0 right-0 top-full mt-1 max-h-40 overflow-y-auto rounded-md border border-gray-300 bg-white shadow-lg z-50">
+                        {intakeFilterOptions.length === 0 ? (
+                          <div className="px-2.5 py-2 text-xs text-gray-500">No options</div>
+                        ) : (
+                          intakeFilterOptions.map((item) => (
+                            <label
+                              key={`intake-filter-${item.id}`}
+                              className="flex items-center gap-2 px-2.5 py-1.5 text-sm text-gray-800 hover:bg-gray-50 cursor-pointer"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={selectedIntakeFilterIds.includes(item.id)}
+                                onChange={() =>
+                                  toggleFilterSelection(item.id, setSelectedIntakeFilterIds)
+                                }
+                                className="h-3.5 w-3.5 rounded text-indigo-600"
+                              />
+                              <span>{item.name}</span>
+                            </label>
+                          ))
+                        )}
+                      </div>
                     )}
                   </div>
                 </div>
@@ -1214,7 +1660,9 @@ export default function BoardView() {
                           <input
                             type="checkbox"
                             checked={selectedServiceAreaFilterIds.includes(item.id)}
-                            onChange={() => toggleFilterSelection(item.id, setSelectedServiceAreaFilterIds)}
+                            onChange={() =>
+                              toggleFilterSelection(item.id, setSelectedServiceAreaFilterIds)
+                            }
                             className="h-3.5 w-3.5 rounded text-indigo-600"
                           />
                           <span>{item.name}</span>
@@ -1300,11 +1748,16 @@ export default function BoardView() {
 
         <DndContext
           sensors={sensors}
-          collisionDetection={pointerWithin}
+          collisionDetection={collisionDetection}
           onDragStart={handleDragStart}
           onDragEnd={handleDragEnd}
         >
-          <div className="flex-1 min-h-0 overflow-x-auto overflow-y-auto">
+          <div
+            ref={boardScrollRef}
+            onWheel={handleBoardCanvasWheel}
+            onMouseDown={handleBoardMouseDown}
+            className="flex-1 min-h-0 overflow-x-auto overflow-y-auto"
+          >
             <div className="min-h-full p-6 flex gap-6 min-w-max">
               <div className="min-h-0 flex gap-6">
                 <div className="min-w-[420px] flex flex-col gap-3">
@@ -1312,17 +1765,22 @@ export default function BoardView() {
                     Admission
                   </div>
                   <div className="flex-1">
-                    <div className="flex gap-6 min-w-max items-start pb-2 pr-2">
-                      {admissionLists.length > 0 ? (
-                        admissionLists.map((list) =>
-                          renderListColumn(list, list.id === addCardAllowedListId)
-                        )
-                      ) : (
-                        <div className="w-80 h-28 rounded-xl border border-dashed border-emerald-300 bg-emerald-50/50 text-emerald-800 text-sm flex items-center justify-center">
-                          {isSearching || hasActiveFilters ? "No matching cards in admission" : "No admission lists"}
-                        </div>
-                      )}
-                    </div>
+                    <SortableContext
+                      items={admissionLists.map((list) => `list-${list.id}`)}
+                      strategy={horizontalListSortingStrategy}
+                    >
+                      <div className="flex gap-6 min-w-max items-start pb-2 pr-2">
+                        {admissionLists.length > 0 ? (
+                          admissionLists.map((list) =>
+                            renderListColumn(list, list.id === addCardAllowedListId)
+                          )
+                        ) : (
+                          <div className="w-80 h-28 rounded-xl border border-dashed border-emerald-300 bg-emerald-50/50 text-emerald-800 text-sm flex items-center justify-center">
+                            {isSearching || hasActiveFilters ? "No matching cards in admission" : "No admission lists"}
+                          </div>
+                        )}
+                      </div>
+                    </SortableContext>
                   </div>
                 </div>
 
@@ -1333,17 +1791,22 @@ export default function BoardView() {
                     Visa
                   </div>
                   <div className="flex-1">
-                    <div className="flex gap-6 min-w-max items-start pb-2 pr-2">
-                      {visaLists.length > 0 ? (
-                        visaLists.map((list) =>
-                          renderListColumn(list, list.id === addCardAllowedListId)
-                        )
-                      ) : (
-                        <div className="w-80 h-28 rounded-xl border border-dashed border-amber-300 bg-amber-50/50 text-amber-800 text-sm flex items-center justify-center">
-                          {isSearching || hasActiveFilters ? "No matching cards in visa" : "No visa lists"}
-                        </div>
-                      )}
-                    </div>
+                    <SortableContext
+                      items={visaLists.map((list) => `list-${list.id}`)}
+                      strategy={horizontalListSortingStrategy}
+                    >
+                      <div className="flex gap-6 min-w-max items-start pb-2 pr-2">
+                        {visaLists.length > 0 ? (
+                          visaLists.map((list) =>
+                            renderListColumn(list, list.id === addCardAllowedListId)
+                          )
+                        ) : (
+                          <div className="w-80 h-28 rounded-xl border border-dashed border-amber-300 bg-amber-50/50 text-amber-800 text-sm flex items-center justify-center">
+                            {isSearching || hasActiveFilters ? "No matching cards in visa" : "No visa lists"}
+                          </div>
+                        )}
+                      </div>
+                    </SortableContext>
                   </div>
                 </div>
 
@@ -1354,17 +1817,22 @@ export default function BoardView() {
                     Dependant Visa
                   </div>
                   <div className="flex-1">
-                    <div className="flex gap-6 min-w-max items-start pb-2 pr-2">
-                      {dependantVisaLists.length > 0 ? (
-                        dependantVisaLists.map((list) =>
-                          renderListColumn(list, list.id === addCardAllowedListId)
-                        )
-                      ) : (
-                        <div className="w-80 h-28 rounded-xl border border-dashed border-rose-300 bg-rose-50/50 text-rose-800 text-sm flex items-center justify-center">
-                          {isSearching || hasActiveFilters ? "No matching cards in dependant visa" : "No dependant visa lists"}
-                        </div>
-                      )}
-                    </div>
+                    <SortableContext
+                      items={dependantVisaLists.map((list) => `list-${list.id}`)}
+                      strategy={horizontalListSortingStrategy}
+                    >
+                      <div className="flex gap-6 min-w-max items-start pb-2 pr-2">
+                        {dependantVisaLists.length > 0 ? (
+                          dependantVisaLists.map((list) =>
+                            renderListColumn(list, list.id === addCardAllowedListId)
+                          )
+                        ) : (
+                          <div className="w-80 h-28 rounded-xl border border-dashed border-rose-300 bg-rose-50/50 text-rose-800 text-sm flex items-center justify-center">
+                            {isSearching || hasActiveFilters ? "No matching cards in dependant visa" : "No dependant visa lists"}
+                          </div>
+                        )}
+                      </div>
+                    </SortableContext>
                   </div>
                 </div>
               </div>
@@ -1441,7 +1909,7 @@ export default function BoardView() {
           </div>
 
           <DragOverlay>
-            {activeCard && (
+            {activeCard ? (
               <div className="w-80 bg-white rounded-xl p-3 shadow-2xl border border-gray-200">
                 <p className="text-sm font-bold text-indigo-700">
                   {activeCard.invoice || `ID-${activeCard.id}`} {activeCard.first_name || ""} {activeCard.last_name || ""}
@@ -1450,7 +1918,9 @@ export default function BoardView() {
                   {formatDateWithOrdinal(activeCard.created_at)}
                 </p>
               </div>
-            )}
+            ) : activeDraggedList ? (
+              renderListDragOverlay(activeDraggedList)
+            ) : null}
           </DragOverlay>
         </DndContext>
 

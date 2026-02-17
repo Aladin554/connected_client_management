@@ -106,7 +106,7 @@ export default function ServiceArea() {
   );
 
   return (
-    <div className="p-5 border border-gray-200 rounded-2xl lg:p-6 bg-white relative w-full max-w-[900px] mx-auto">
+    <div className="p-5 border border-gray-200 rounded-2xl lg:p-6 bg-white relative w-full max-w-[1280px] mx-auto">
       <ToastContainer position="top-right" autoClose={3000} hideProgressBar theme="colored" />
 
       <div className="flex flex-col sm:flex-row justify-between items-center mb-5 gap-3">
@@ -137,6 +137,9 @@ export default function ServiceArea() {
                 Name
               </th>
               <th className="px-6 py-4 text-left font-medium text-gray-700 border-r border-gray-200">
+                Created
+              </th>
+              <th className="px-6 py-4 text-left font-medium text-gray-700 border-r border-gray-200">
                 Updated
               </th>
               <th className="px-6 py-4 text-left font-medium text-gray-700">Action</th>
@@ -145,13 +148,13 @@ export default function ServiceArea() {
           <tbody className="divide-y divide-gray-200">
             {loading ? (
               <tr>
-                <td colSpan={3} className="text-center py-12 text-gray-500">
+                <td colSpan={4} className="text-center py-12 text-gray-500">
                   Loading...
                 </td>
               </tr>
             ) : filtered.length === 0 ? (
               <tr>
-                <td colSpan={3} className="text-center py-12 text-gray-500">
+                <td colSpan={4} className="text-center py-12 text-gray-500">
                   No service area found
                 </td>
               </tr>
@@ -160,6 +163,9 @@ export default function ServiceArea() {
                 <tr key={item.id} className="hover:bg-gray-50 transition">
                   <td className="px-6 py-4 border-r border-gray-200 text-gray-800 font-medium">
                     {item.name}
+                  </td>
+                  <td className="px-6 py-4 border-r border-gray-200 text-gray-700">
+                    {item.created_at ? new Date(item.created_at).toISOString().split("T")[0] : "-"}
                   </td>
                   <td className="px-6 py-4 border-r border-gray-200 text-gray-700">
                     {item.updated_at ? new Date(item.updated_at).toISOString().split("T")[0] : "-"}
