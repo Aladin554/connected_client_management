@@ -77,6 +77,7 @@ export default function BoardView() {
   const [showFilterMenu, setShowFilterMenu] = useState(false);
   const [showArchivedModal, setShowArchivedModal] = useState(false);
   const [showActivityModal, setShowActivityModal] = useState(false);
+  const [showUserMenu, setShowUserMenu] = useState(false);
   const [activityTab, setActivityTab] = useState<"all" | "comment">("all");
   const [boardActivities, setBoardActivities] = useState<BoardActivity[]>([]);
   const [loadingBoardActivities, setLoadingBoardActivities] = useState(false);
@@ -103,6 +104,7 @@ export default function BoardView() {
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const filterSearchInputRef = useRef<HTMLInputElement | null>(null);
   const filterMenuRef = useRef<HTMLDivElement | null>(null);
+  const userMenuRef = useRef<HTMLDivElement | null>(null);
   const boardScrollRef = useRef<HTMLDivElement | null>(null);
   const boardPanStartRef = useRef<{
     x: number;
@@ -331,6 +333,11 @@ export default function BoardView() {
         return;
       }
 
+      if (event.key === "Escape" && showUserMenu) {
+        setShowUserMenu(false);
+        return;
+      }
+
       if (event.ctrlKey || event.metaKey || event.altKey) {
         return;
       }
@@ -357,12 +364,12 @@ export default function BoardView() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [showActivityModal, showFilterMenu]);
+  }, [showActivityModal, showFilterMenu, showUserMenu]);
 
   useEffect(() => {
     if (!showFilterMenu) return;
 
-    const handleOutsideClick = (event: MouseEvent) => {
+    const handleOutsideClick = (event: globalThis.MouseEvent) => {
       if (!filterMenuRef.current) return;
       if (!filterMenuRef.current.contains(event.target as Node)) {
         setShowFilterMenu(false);
@@ -378,6 +385,20 @@ export default function BoardView() {
       setOpenMultiSelectFilter(null);
     }
   }, [showFilterMenu]);
+
+  useEffect(() => {
+    if (!showUserMenu) return;
+
+    const handleOutsideClick = (event: globalThis.MouseEvent) => {
+      if (!userMenuRef.current) return;
+      if (!userMenuRef.current.contains(event.target as Node)) {
+        setShowUserMenu(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleOutsideClick);
+    return () => document.removeEventListener("mousedown", handleOutsideClick);
+  }, [showUserMenu]);
 
   useEffect(() => {
     if (!showActivityModal) return;
@@ -1442,6 +1463,23 @@ export default function BoardView() {
     setIsBoardPanning(true);
   };
 
+  const handleOpenProfileSettings = () => {
+    setShowUserMenu(false);
+    navigate("/profile");
+  };
+
+  const handleLogout = () => {
+    setShowUserMenu(false);
+    sessionStorage.removeItem("token");
+    sessionStorage.removeItem("role_id");
+    sessionStorage.removeItem("panel_permission");
+    sessionStorage.removeItem("user");
+    sessionStorage.removeItem("auth");
+    localStorage.removeItem("token");
+    localStorage.removeItem("user");
+    navigate("/signin");
+  };
+
   return (
     <div className="h-screen flex flex-col bg-gray-50 overflow-hidden">
       {/* TOP BAR */}
@@ -1725,14 +1763,41 @@ export default function BoardView() {
           </button>
           {/* <Bell size={20} />
           <HelpCircle size={20} /> */}
-          <button
-            type="button"
-            onClick={() => navigate("/profile")}
-            className="h-8 px-3 rounded-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white text-sm font-semibold flex items-center justify-center shadow-sm hover:opacity-95"
-            title="Edit profile"
-          >
-            {profile?.first_name || "User"}
-          </button>
+          <div className="relative" ref={userMenuRef}>
+            <button
+              type="button"
+              onClick={() => setShowUserMenu((prev) => !prev)}
+              className="h-8 px-3 rounded-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white text-sm font-semibold flex items-center justify-center gap-1.5 shadow-sm hover:opacity-95"
+              title="Open user menu"
+              aria-expanded={showUserMenu}
+              aria-haspopup="menu"
+            >
+              {profile?.first_name || "User"}
+              <ChevronDown
+                size={14}
+                className={`transition-transform ${showUserMenu ? "rotate-180" : ""}`}
+              />
+            </button>
+
+            {showUserMenu && (
+              <div className="absolute right-0 mt-2 w-44 rounded-lg border border-gray-200 bg-white py-1.5 shadow-lg z-40">
+                <button
+                  type="button"
+                  onClick={handleOpenProfileSettings}
+                  className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                >
+                  Profile Settings
+                </button>
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50"
+                >
+                  Logout
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 

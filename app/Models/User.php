@@ -24,7 +24,6 @@ class User extends Authenticatable
         'report_notification',
         'last_login_at',
         'can_create_users',
-        'allowed_ips',
     ];
 
     protected $hidden = [
@@ -39,7 +38,6 @@ class User extends Authenticatable
         'role_id'           => 'integer',
         'can_create_users' => 'integer',
         'report_notification' => 'integer',
-        'allowed_ips'       => 'array',
     ];
 
     /**
@@ -80,33 +78,6 @@ class User extends Authenticatable
     public function sendPasswordResetNotification($token)
     {
         $this->notify(new CustomResetPassword($token));
-    }
-
-    public function allowedIpsArray(): array
-    {
-        $raw = $this->allowed_ips;
-
-        if (is_string($raw)) {
-            $decoded = json_decode($raw, true);
-            if (is_array($decoded)) {
-                $raw = $decoded;
-            } else {
-                $raw = preg_split('/[\s,]+/', $raw) ?: [];
-            }
-        }
-
-        if (!is_array($raw)) {
-            return [];
-        }
-
-        return array_values(array_unique(array_filter(array_map(static function ($ip) {
-            return trim((string) $ip);
-        }, $raw))));
-    }
-
-    public function isIpAllowed(string $ip): bool
-    {
-        return in_array($ip, $this->allowedIpsArray(), true);
     }
 
     public function cities()

@@ -97,8 +97,6 @@ class UserController extends Controller
                 : 'required|email|unique:users,email',
             'password'   => $isUpdate ? 'sometimes|min:6' : 'required|min:6',
             'role_id'    => $isUpdate ? 'sometimes|exists:roles,id' : 'required|exists:roles,id',
-            'allowed_ips' => 'sometimes|array',
-            'allowed_ips.*' => 'nullable|ip',
         ];
     }
 
@@ -137,7 +135,6 @@ class UserController extends Controller
     public function store(Request $request): JsonResponse
     {
         $request->validate($this->validationRules());
-        $allowedIps = $this->sanitizeAllowedIps($request->input('allowed_ips', []));
 
         $role = Role::find($request->role_id);
 
@@ -154,7 +151,6 @@ class UserController extends Controller
                 'email'      => $request->email,
                 'role_id'    => $request->role_id,
                 'password'   => Hash::make($plainPassword),
-                'allowed_ips' => $allowedIps,
             ]);
 
             // Send welcome / credentials email
@@ -216,9 +212,6 @@ class UserController extends Controller
         }
 
         $request->validate($this->validationRules(true, $id));
-        $requestedAllowedIps = $request->has('allowed_ips')
-            ? $this->sanitizeAllowedIps($request->input('allowed_ips', []))
-            : $this->sanitizeAllowedIps($user->allowed_ips);
 
         if ($request->role_id) {
             $role = Role::find($request->role_id);
@@ -233,10 +226,6 @@ class UserController extends Controller
             'email'      => $request->email ?? $user->email,
             'role_id'    => $request->role_id ?? $user->role_id,
         ]);
-
-        if ($request->has('allowed_ips')) {
-            $user->allowed_ips = $requestedAllowedIps;
-        }
 
         if ($request->password) {
             $user->password = Hash::make($request->password);
@@ -281,14 +270,7 @@ class UserController extends Controller
 
         SystemSetting::setIpAllowlist($allowedIps);
 
-        // Keep existing per-user copies aligned (optional but useful for visibility/history).
-        User::query()
-            ->whereIn('role_id', [2, 3, 4])
-            ->get()
-            ->each(function (User $targetUser) use ($allowedIps): void {
-                $targetUser->allowed_ips = $allowedIps;
-                $targetUser->save();
-            });
+        // Global-only mode: do not mirror IPs into per-user `allowed_ips`.
 
         return response()->json([
             'message' => 'Global IP access updated successfully',

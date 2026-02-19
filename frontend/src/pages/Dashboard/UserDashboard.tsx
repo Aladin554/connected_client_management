@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Search } from "lucide-react";
+import { ChevronDown, Search } from "lucide-react";
 import Loader from "../Loader/Loader";
 import api from "../../api/axios";
 import { getMeCached } from "../../utils/me";
@@ -43,6 +43,8 @@ export default function UserDashboard() {
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
+  const [showUserMenu, setShowUserMenu] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const fetchDashboard = async () => {
@@ -63,6 +65,30 @@ export default function UserDashboard() {
 
     void fetchDashboard();
   }, []);
+
+  useEffect(() => {
+    if (!showUserMenu) return;
+
+    const handleOutsideClick = (event: globalThis.MouseEvent) => {
+      if (!userMenuRef.current) return;
+      if (!userMenuRef.current.contains(event.target as Node)) {
+        setShowUserMenu(false);
+      }
+    };
+
+    const handleEscapeKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setShowUserMenu(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleOutsideClick);
+    window.addEventListener("keydown", handleEscapeKey);
+    return () => {
+      document.removeEventListener("mousedown", handleOutsideClick);
+      window.removeEventListener("keydown", handleEscapeKey);
+    };
+  }, [showUserMenu]);
 
   const normalizedSearchTerm = searchTerm.trim().toLowerCase();
 
@@ -85,6 +111,23 @@ export default function UserDashboard() {
       })
       .filter((city) => city.boards.length > 0);
   }, [cities, normalizedSearchTerm]);
+
+  const handleOpenProfileSettings = () => {
+    setShowUserMenu(false);
+    navigate("/profile");
+  };
+
+  const handleLogout = () => {
+    setShowUserMenu(false);
+    sessionStorage.removeItem("token");
+    sessionStorage.removeItem("role_id");
+    sessionStorage.removeItem("panel_permission");
+    sessionStorage.removeItem("user");
+    sessionStorage.removeItem("auth");
+    localStorage.removeItem("token");
+    localStorage.removeItem("user");
+    navigate("/signin");
+  };
 
   if (loading) {
     return <Loader message="Loading dashboard..." />;
@@ -121,14 +164,41 @@ export default function UserDashboard() {
         </div>
 
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => navigate("/profile")}
-            className="h-8 px-3 rounded-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white text-sm font-semibold flex items-center justify-center shadow-sm hover:opacity-95"
-            title="Edit profile"
-          >
-            {profile?.first_name || "User"}
-          </button>
+          <div className="relative" ref={userMenuRef}>
+            <button
+              type="button"
+              onClick={() => setShowUserMenu((prev) => !prev)}
+              className="h-8 px-3 rounded-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white text-sm font-semibold flex items-center justify-center gap-1.5 shadow-sm hover:opacity-95"
+              title="Open user menu"
+              aria-expanded={showUserMenu}
+              aria-haspopup="menu"
+            >
+              {profile?.first_name || "User"}
+              <ChevronDown
+                size={14}
+                className={`transition-transform ${showUserMenu ? "rotate-180" : ""}`}
+              />
+            </button>
+
+            {showUserMenu && (
+              <div className="absolute right-0 mt-2 w-44 rounded-lg border border-gray-200 bg-white py-1.5 shadow-lg z-40">
+                <button
+                  type="button"
+                  onClick={handleOpenProfileSettings}
+                  className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                >
+                  Profile Settings
+                </button>
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50"
+                >
+                  Logout
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
