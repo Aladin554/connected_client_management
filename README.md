@@ -7,6 +7,45 @@
 <a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
 </p>
 
+## Run with Docker
+
+1. Start the stack:
+
+```bash
+docker compose up --build
+```
+
+2. Open the app:
+
+```txt
+http://localhost:8000
+```
+
+3. Stop containers:
+
+```bash
+docker compose down
+```
+
+4. Reset database volume (fresh start):
+
+```bash
+docker compose down -v
+```
+
+### Docker environment notes
+
+- MySQL is exposed on `localhost:3307` by default.
+- App container uses MySQL service host `db` internally.
+- Override DB defaults with:
+  - `DOCKER_DB_DATABASE`
+  - `DOCKER_DB_USERNAME`
+  - `DOCKER_DB_PASSWORD`
+  - `DOCKER_DB_ROOT_PASSWORD`
+  - `DOCKER_DB_PORT`
+- Migrations run on app startup by default (`RUN_MIGRATIONS=true`).
+- Optional seeding is available with `RUN_SEEDERS=true`.
+
 ## About Laravel
 
 Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
