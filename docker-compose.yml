@@ -2,53 +2,113 @@ services:
   app:
     build:
       context: .
-      dockerfile: Dockerfile
-    container_name: connected-client-app
-    ports:
-      - "8000:8000"
+      dockerfile: Dockerfile.prod
+      target: app
+    image: connected-client-app:${APP_IMAGE_TAG:-latest}
     env_file:
       - .env
     environment:
-      APP_ENV: local
-      APP_DEBUG: "true"
-      APP_URL: http://localhost:8000
-      FRONTEND_URL: http://localhost:8000
+      APP_ENV: ${APP_ENV:-production}
+      APP_DEBUG: ${APP_DEBUG:-false}
+      APP_URL: ${APP_URL:-http://localhost}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost}
       DB_CONNECTION: mysql
       DB_HOST: db
       DB_PORT: 3306
       DB_DATABASE: ${DOCKER_DB_DATABASE:-project_management}
       DB_USERNAME: ${DOCKER_DB_USERNAME:-app}
-      DB_PASSWORD: ${DOCKER_DB_PASSWORD:-app_password}
+      DB_PASSWORD: ${DOCKER_DB_PASSWORD:-change_me}
       RUN_MIGRATIONS: ${RUN_MIGRATIONS:-true}
       RUN_SEEDERS: ${RUN_SEEDERS:-false}
     depends_on:
       db:
         condition: service_healthy
     volumes:
-      - storage_data:/var/www/html/storage
-      - bootstrap_cache:/var/www/html/bootstrap/cache
+      - storage_data_prod:/var/www/html/storage
+      - bootstrap_cache_prod:/var/www/html/bootstrap/cache
+    healthcheck:
+      test: ["CMD-SHELL", "php-fpm -t || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+      target: web
+    image: connected-client-web:${WEB_IMAGE_TAG:-latest}
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - storage_data_prod:/var/www/html/storage:ro
+      - certbot_webroot_prod:/var/www/certbot
+      - letsencrypt_prod:/etc/letsencrypt:ro
+    restart: unless-stopped
+
+  queue:
+    image: connected-client-app:${APP_IMAGE_TAG:-latest}
+    env_file:
+      - .env
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      APP_DEBUG: ${APP_DEBUG:-false}
+      APP_URL: ${APP_URL:-http://localhost}
+      DB_CONNECTION: mysql
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_DATABASE: ${DOCKER_DB_DATABASE:-project_management}
+      DB_USERNAME: ${DOCKER_DB_USERNAME:-app}
+      DB_PASSWORD: ${DOCKER_DB_PASSWORD:-change_me}
+      RUN_MIGRATIONS: "false"
+      RUN_SEEDERS: "false"
+    command: php artisan queue:work --sleep=3 --tries=3 --timeout=120
+    depends_on:
+      app:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    volumes:
+      - storage_data_prod:/var/www/html/storage
+      - bootstrap_cache_prod:/var/www/html/bootstrap/cache
     restart: unless-stopped
 
   db:
     image: mysql:8.4
-    container_name: connected-client-db
     ports:
-      - "${DOCKER_DB_PORT:-3307}:3306"
+      - "127.0.0.1:${DOCKER_DB_PORT:-3307}:3306"
     environment:
       MYSQL_DATABASE: ${DOCKER_DB_DATABASE:-project_management}
       MYSQL_USER: ${DOCKER_DB_USERNAME:-app}
-      MYSQL_PASSWORD: ${DOCKER_DB_PASSWORD:-app_password}
-      MYSQL_ROOT_PASSWORD: ${DOCKER_DB_ROOT_PASSWORD:-root_password}
+      MYSQL_PASSWORD: ${DOCKER_DB_PASSWORD:-change_me}
+      MYSQL_ROOT_PASSWORD: ${DOCKER_DB_ROOT_PASSWORD:-change_root_password}
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"]
       interval: 5s
       timeout: 5s
       retries: 30
     volumes:
-      - db_data:/var/lib/mysql
+      - db_data_prod:/var/lib/mysql
+    restart: unless-stopped
+
+  certbot:
+    image: certbot/certbot:latest
+    profiles: ["certbot"]
+    volumes:
+      - certbot_webroot_prod:/var/www/certbot
+      - letsencrypt_prod:/etc/letsencrypt
+    entrypoint: /bin/sh
+    command: -c "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet; sleep 12h; done"
     restart: unless-stopped
 
 volumes:
-  db_data:
-  storage_data:
-  bootstrap_cache:
+  db_data_prod:
+  storage_data_prod:
+  bootstrap_cache_prod:
+  certbot_webroot_prod:
+  letsencrypt_prod:

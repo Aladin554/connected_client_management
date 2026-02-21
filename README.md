@@ -7,44 +7,98 @@
 <a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
 </p>
 
-## Run with Docker
+## Docker: Development
 
-1. Start the stack:
+Use this when building/running locally with `artisan serve`:
 
 ```bash
-docker compose up --build
+docker compose -f docker-compose.dev.yml up --build -d
 ```
 
-2. Open the app:
+App URL:
 
 ```txt
 http://localhost:8000
 ```
 
-3. Stop containers:
+Stop dev stack:
+
+```bash
+docker compose -f docker-compose.dev.yml down
+```
+
+## Docker: VPS Production
+
+Production stack uses:
+
+- `PHP-FPM` app container
+- `Nginx` web container
+- `MySQL` database
+- `queue` worker
+- optional `certbot` renewal service profile
+
+1. Prepare environment:
+
+```bash
+cp .env.vps.example .env
+```
+
+Set at least these values in `.env`:
+
+- `APP_KEY` (generate with `php artisan key:generate --show`)
+- `APP_URL` and `FRONTEND_URL`
+- `DOCKER_DB_PASSWORD` and `DOCKER_DB_ROOT_PASSWORD`
+- mail credentials
+
+2. Build and start production stack:
+
+```bash
+docker compose up --build -d
+```
+
+3. Open app:
+
+```txt
+http://<your-vps-ip-or-domain>
+```
+
+4. Stop production stack:
 
 ```bash
 docker compose down
 ```
 
-4. Reset database volume (fresh start):
+5. Remove production volumes (destructive):
 
 ```bash
 docker compose down -v
 ```
 
-### Docker environment notes
+### SSL (Let's Encrypt)
 
-- MySQL is exposed on `localhost:3307` by default.
-- App container uses MySQL service host `db` internally.
-- Override DB defaults with:
-  - `DOCKER_DB_DATABASE`
-  - `DOCKER_DB_USERNAME`
-  - `DOCKER_DB_PASSWORD`
-  - `DOCKER_DB_ROOT_PASSWORD`
-  - `DOCKER_DB_PORT`
-- Migrations run on app startup by default (`RUN_MIGRATIONS=true`).
-- Optional seeding is available with `RUN_SEEDERS=true`.
+`Nginx` is already configured for ACME webroot challenges at `/.well-known/acme-challenge/`.
+
+Initial cert issue (replace domain and email):
+
+```bash
+docker compose run --rm certbot certonly --webroot -w /var/www/certbot -d example.com -d www.example.com --email you@example.com --agree-tos --no-eff-email
+```
+
+After certs are issued:
+
+1. Copy `docker/nginx/default.ssl.conf.example` to `docker/nginx/default.conf`.
+2. Replace `example.com` in the file with your real domain.
+3. Restart web container:
+
+```bash
+docker compose up -d --build web
+```
+
+Auto-renew service (optional):
+
+```bash
+docker compose --profile certbot up -d certbot
+```
 
 ## About Laravel
 
