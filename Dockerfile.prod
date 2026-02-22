@@ -47,6 +47,9 @@ WORKDIR /var/www/html
 
 COPY --from=app /var/www/html/public ./public
 COPY docker/nginx/default.conf /etc/nginx/conf.d/default.conf
-RUN ln -sf /var/www/html/storage/app/public /var/www/html/public/storage
+RUN ln -sf /var/www/html/storage/app/public /var/www/html/public/storage \
+    && ln -sf /var/www/html/public/react/assets /var/www/html/public/assets \
+    && ln -sf /var/www/html/public/react/images /var/www/html/public/images \
+    && ln -sf /var/www/html/public/react/favicon.png /var/www/html/public/favicon.png
 
 EXPOSE 80
