@@ -14,6 +14,13 @@ interface CurrentUser {
   can_create_users: number;
 }
 
+const isLikelyIp = (value: string): boolean => {
+  const ipv4 =
+    /^(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$/;
+  const ipv6 = /^[0-9A-Fa-f:]+$/;
+  return ipv4.test(value) || (value.includes(":") && ipv6.test(value));
+};
+
 export default function AdminUserForm() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -28,6 +35,7 @@ export default function AdminUserForm() {
     roleId: isEdit ? "" : "3",
     password: "",
     max_cards: "10",
+    allowed_ips: [] as string[],
   });
 
   const [errors, setErrors] = useState({
@@ -37,7 +45,9 @@ export default function AdminUserForm() {
     roleId: "",
     password: "",
     max_cards: "",
+    allowed_ips: "",
   });
+  const [ipInput, setIpInput] = useState("");
 
   const [submitting, setSubmitting] = useState(false);
   const [roles, setRoles] = useState<Role[]>([]);
@@ -65,14 +75,18 @@ export default function AdminUserForm() {
     // Super Admin always allowed
     if (roleId === 1) return;
 
-    // Admin role with permission allowed
-    if (roleId === 2 && canCreate) return;
+    // Admin role:
+    // - can always edit existing users
+    // - can create new users only when can_create_users is enabled
+    if (roleId === 2) {
+      if (isEdit || canCreate) return;
+    }
 
     // Otherwise redirect
     navigate("/dashboard/admin-users", {
       state: { message: "You do not have access to this page.", type: "error" },
     });
-  }, [currentUser, navigate]);
+  }, [currentUser, isEdit, navigate]);
 
   // ---------- FETCH ROLES ----------
   useEffect(() => {
@@ -95,6 +109,7 @@ export default function AdminUserForm() {
             roleId: res.data.role_id?.toString() || res.data.role?.id?.toString() || "",
             password: "",
             max_cards: res.data.max_cards?.toString() || "10",
+            allowed_ips: Array.isArray(res.data.allowed_ips) ? res.data.allowed_ips : [],
           });
         })
         .catch(() =>
@@ -105,7 +120,7 @@ export default function AdminUserForm() {
 
   // ---------- VALIDATE FORM ----------
   const validateForm = () => {
-    const newErrors = { first_name: "", last_name: "", email: "", roleId: "", password: "", max_cards: "" };
+    const newErrors = { first_name: "", last_name: "", email: "", roleId: "", password: "", max_cards: "", allowed_ips: "" };
     let valid = true;
 
     if (!form.first_name.trim()) { newErrors.first_name = "First name is required."; valid = false; }
@@ -121,10 +136,43 @@ export default function AdminUserForm() {
         newErrors.max_cards = "Max cards must be between 1 and 1000";
         valid = false;
       }
+
+      if (form.allowed_ips.some((ip) => !isLikelyIp(ip))) {
+        newErrors.allowed_ips = "One or more IPs are invalid.";
+        valid = false;
+      }
     }
 
     setErrors(newErrors);
     return valid;
+  };
+
+  const addAllowedIp = () => {
+    const raw = ipInput.trim();
+    if (!raw) return;
+
+    const values = raw.split(/[,\s]+/).map((v) => v.trim()).filter(Boolean);
+    if (values.length === 0) return;
+
+    const invalid = values.find((value) => !isLikelyIp(value));
+    if (invalid) {
+      setErrors((prev) => ({ ...prev, allowed_ips: `Invalid IP: ${invalid}` }));
+      return;
+    }
+
+    setForm((prev) => ({
+      ...prev,
+      allowed_ips: Array.from(new Set([...prev.allowed_ips, ...values])),
+    }));
+    setErrors((prev) => ({ ...prev, allowed_ips: "" }));
+    setIpInput("");
+  };
+
+  const removeAllowedIp = (ip: string) => {
+    setForm((prev) => ({
+      ...prev,
+      allowed_ips: prev.allowed_ips.filter((value) => value !== ip),
+    }));
   };
 
   // ---------- SUBMIT FORM ----------
@@ -144,6 +192,7 @@ export default function AdminUserForm() {
 
       if (form.password) payload.password = form.password;
       if (currentUser?.role_id === 1) payload.max_cards = Number(form.max_cards);
+      if (currentUser?.role_id === 1) payload.allowed_ips = form.allowed_ips;
 
       if (isEdit) {
         await api.put(`/users/${id}`, payload);
@@ -209,6 +258,49 @@ export default function AdminUserForm() {
             </select>
             {errors.roleId && <p className="text-red-500 text-sm mt-1">{errors.roleId}</p>}
           </div>
+
+          {currentUser?.role_id === 1 && (
+            <div className="md:col-span-2">
+              <label className="block mb-1 text-sm font-medium dark:text-gray-300">Allowed IPs (User-wise security)</label>
+              <div className="flex flex-wrap gap-2 mb-2">
+                {form.allowed_ips.map((ip) => (
+                  <span key={ip} className="inline-flex items-center gap-2 rounded-md bg-blue-50 px-2 py-1 text-xs font-medium text-blue-800">
+                    {ip}
+                    <button
+                      type="button"
+                      onClick={() => removeAllowedIp(ip)}
+                      className="text-blue-700 hover:text-blue-900"
+                    >
+                      x
+                    </button>
+                  </span>
+                ))}
+              </div>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={ipInput}
+                  onChange={(e) => setIpInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addAllowedIp();
+                    }
+                  }}
+                  placeholder="Add IP (e.g. 203.0.113.10)"
+                  className="w-full border px-3 py-2 rounded-lg text-lg dark:bg-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <button
+                  type="button"
+                  onClick={addAllowedIp}
+                  className="px-4 py-2 rounded-lg border dark:border-gray-600 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800"
+                >
+                  Add
+                </button>
+              </div>
+              {errors.allowed_ips && <p className="text-red-500 text-sm mt-1">{errors.allowed_ips}</p>}
+            </div>
+          )}
 
         </div>
 

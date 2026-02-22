@@ -2,7 +2,6 @@
 
 namespace App\Http\Middleware;
 
-use App\Models\SystemSetting;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -19,10 +18,10 @@ class RestrictAdminIp
 
         $user = $request->user();
 
-        // If user is logged in and role is restricted, enforce global IP allowlist.
+        // If user is logged in and role is restricted, enforce per-user IP allowlist.
         if ($user && in_array((int) $user->role_id, $this->restrictedRoles, true)) {
-            $allowedIps = SystemSetting::getIpAllowlist();
-            if (empty($allowedIps) || !in_array($ip, $allowedIps, true)) {
+            $allowedIps = $this->sanitizeAllowedIps($user->allowed_ips ?? []);
+            if (!empty($allowedIps) && !in_array($ip, $allowedIps, true)) {
                 $request->user()?->currentAccessToken()?->delete();
 
                 Log::warning('Blocked access from unauthorized IP', [
@@ -58,5 +57,16 @@ class RestrictAdminIp
         }
 
         return (string) $request->ip();
+    }
+
+    protected function sanitizeAllowedIps($value): array
+    {
+        if (!is_array($value)) {
+            return [];
+        }
+
+        return array_values(array_unique(array_filter(array_map(static function ($ip) {
+            return trim((string) $ip);
+        }, $value))));
     }
 }

@@ -20,6 +20,7 @@ import {
   Plus,
   RotateCcw,
   Search,
+  Trash2,
   X,
 } from "lucide-react";
 import {
@@ -72,6 +73,7 @@ export default function BoardView() {
   const [editingListId, setEditingListId] = useState<number | null>(null);
   const [editedListTitle, setEditedListTitle] = useState("");
   const [savingListId, setSavingListId] = useState<number | null>(null);
+  const [deletingListId, setDeletingListId] = useState<number | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [moveBlockedMessage, setMoveBlockedMessage] = useState<string | null>(null);
   const [showFilterMenu, setShowFilterMenu] = useState(false);
@@ -632,6 +634,7 @@ export default function BoardView() {
 
   const canEditListTitle = Number(profile?.role_id) === 1;
   const canMoveLists = Number(profile?.role_id) === 1;
+  const canDeleteLists = Number(profile?.role_id) === 1;
 
   const startEditListTitle = (list: List) => {
     if (!canEditListTitle || savingListId !== null) return;
@@ -672,6 +675,43 @@ export default function BoardView() {
       setEditedListTitle(list.title);
     } finally {
       setSavingListId(null);
+    }
+  };
+
+  const handleDeleteList = async (list: List) => {
+    if (!board || !canDeleteLists) return;
+
+    const confirmed = window.confirm(
+      `Delete list "${list.title}" and all its cards? This cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    const previousLists = board.lists;
+    setDeletingListId(list.id);
+    setBoard((prev) =>
+      prev ? { ...prev, lists: prev.lists.filter((item) => item.id !== list.id) } : prev
+    );
+
+    if (activeCardListId === list.id) {
+      setActiveCardListId(null);
+    }
+    if (editingListId === list.id) {
+      setEditingListId(null);
+      setEditedListTitle("");
+    }
+    if (selectedCard?.board_list_id === list.id) {
+      setSelectedCard(null);
+    }
+
+    try {
+      await api.delete(`/boards/${board.id}/lists/${list.id}`);
+      await logActivity("deleted list", `List: ${list.title}`, undefined, list.id);
+    } catch (err: any) {
+      console.error("Delete list failed", err);
+      setBoard((prev) => (prev ? { ...prev, lists: previousLists } : prev));
+      alert(err?.response?.data?.message || "Could not delete list.");
+    } finally {
+      setDeletingListId(null);
     }
   };
 
@@ -1296,6 +1336,18 @@ export default function BoardView() {
               <span className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 text-xs font-semibold whitespace-nowrap">
                 {list.cards.length} {list.cards.length === 1 ? "card" : "cards"} match
               </span>
+            )}
+            {canDeleteLists && (
+              <button
+                type="button"
+                onClick={() => void handleDeleteList(list)}
+                disabled={deletingListId === list.id}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-red-200 text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                title="Delete list"
+                aria-label={`Delete ${list.title}`}
+              >
+                <Trash2 size={15} />
+              </button>
             )}
           </div>
         </div>

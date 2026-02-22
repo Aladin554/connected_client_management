@@ -141,7 +141,10 @@ class BoardListController extends Controller
         }
 
         $this->assertCanAccessBoard($board);
-        $this->assertCanAccessList($boardList);
+
+        if ((int) auth()->user()->role_id !== 1) {
+            return response()->json(['message' => 'Only superadmin can delete lists'], 403);
+        }
 
         $boardList->delete();
         return response()->json(['message' => 'List deleted']);

@@ -25,6 +25,13 @@ interface User {
   updated_at?: string;
 }
 
+const normalizeUser = (user: any): User => ({
+  ...user,
+  role_id: Number(user?.role_id ?? 0),
+  can_create_users: Number(user?.can_create_users ?? 0),
+  panel_permission: Number(user?.panel_permission ?? user?.permission ?? 0),
+});
+
 export default function AdminUsers() {
   const [users, setUsers] = useState<User[]>([]);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -67,7 +74,8 @@ export default function AdminUsers() {
     try {
       setLoading(true);
       const res = await api.get("/users");
-      setUsers(res.data);
+      const rows = Array.isArray(res.data) ? res.data : [];
+      setUsers(rows.map((row) => normalizeUser(row)));
     } catch (err: any) {
       toast.error(err?.response?.data?.message || "Failed to fetch users");
     } finally {
@@ -81,7 +89,9 @@ export default function AdminUsers() {
 
   const applyServerUpdate = (userId: number, updates: Partial<User>) => {
     setUsers((prev) =>
-      prev.map((u) => (u.id === userId ? { ...u, ...updates } : u))
+      prev.map((u) =>
+        u.id === userId ? normalizeUser({ ...u, ...updates }) : u
+      )
     );
   };
 
@@ -92,7 +102,7 @@ export default function AdminUsers() {
       return;
     }
 
-    const oldVal = user.can_create_users;
+    const oldVal = Number(user.can_create_users ?? 0);
     const optimistic = oldVal === 1 ? 0 : 1;
 
     setUsers((prev) =>
@@ -104,14 +114,14 @@ export default function AdminUsers() {
       const body = res.data ?? {};
 
       if (body.user || body.id) {
-        applyServerUpdate(user.id, body.user ?? body);
+        applyServerUpdate(user.id, normalizeUser(body.user ?? body));
       } else if (body.hasOwnProperty("can_create_users")) {
-        applyServerUpdate(user.id, { can_create_users: body.can_create_users });
+        applyServerUpdate(user.id, { can_create_users: Number(body.can_create_users) });
       } else {
         fetchUsers();
       }
 
-      const finalValue = body.can_create_users ?? body.user?.can_create_users;
+      const finalValue = Number(body.can_create_users ?? body.user?.can_create_users ?? optimistic);
       toast.success(`Permission: ${finalValue === 1 ? "Active" : "Inactive"}`);
     } catch (err: any) {
       setUsers((prev) =>
@@ -137,7 +147,7 @@ export default function AdminUsers() {
       return;
     }
 
-    const oldVal = user.panel_permission ?? 0;
+    const oldVal = Number(user.panel_permission ?? 0);
     const optimistic = oldVal === 1 ? 0 : 1;
 
     setUsers((prev) =>
@@ -161,10 +171,10 @@ export default function AdminUsers() {
       let finalValue: number;
 
       if (body.panel_permission !== undefined) {
-        finalValue = body.panel_permission;
+        finalValue = Number(body.panel_permission);
       } else if (body.user?.panel_permission !== undefined) {
-        finalValue = body.user.panel_permission;
-        applyServerUpdate(user.id, body.user);
+        finalValue = Number(body.user.panel_permission);
+        applyServerUpdate(user.id, normalizeUser(body.user));
       } else {
         finalValue = optimistic;
       }
@@ -191,7 +201,7 @@ export default function AdminUsers() {
       return;
     }
 
-    const oldVal = user.panel_permission ?? 0;
+    const oldVal = Number(user.panel_permission ?? 0);
     const optimistic = oldVal === 1 ? 0 : 1;
 
     setUsers((prev) =>
@@ -203,14 +213,14 @@ export default function AdminUsers() {
       const body = res.data ?? {};
 
       if (body.user || body.id) {
-        applyServerUpdate(user.id, body.user ?? body);
+        applyServerUpdate(user.id, normalizeUser(body.user ?? body));
       } else if (body.hasOwnProperty("panel_permission")) {
-        applyServerUpdate(user.id, { panel_permission: body.panel_permission });
+        applyServerUpdate(user.id, { panel_permission: Number(body.panel_permission) });
       } else {
         fetchUsers();
       }
 
-      const finalValue = body.panel_permission ?? body.user?.panel_permission;
+      const finalValue = Number(body.panel_permission ?? body.user?.panel_permission ?? optimistic);
       toast.success(`Panel Status: ${finalValue === 1 ? "Active" : "Inactive"}`);
     } catch (err: any) {
       setUsers((prev) =>
@@ -437,12 +447,12 @@ export default function AdminUsers() {
                         <button
                           onClick={() => togglePermission(user)}
                           className={`px-3 py-1.5 rounded text-white text-sm font-medium transition ${
-                            user.can_create_users === 1
+                            Number(user.can_create_users) === 1
                               ? "bg-green-600 hover:bg-green-700"
                               : "bg-red-600 hover:bg-red-700"
                           }`}
                         >
-                          {user.can_create_users === 1 ? "Active" : "Inactive"}
+                          {Number(user.can_create_users) === 1 ? "Active" : "Inactive"}
                         </button>
                       </td>
 
@@ -450,12 +460,12 @@ export default function AdminUsers() {
                         <button
                           onClick={() => togglePanelPermission(user)}
                           className={`px-3 py-1.5 rounded text-white text-sm font-medium transition ${
-                            user.panel_permission === 1
+                            Number(user.panel_permission) === 1
                               ? "bg-emerald-600 hover:bg-emerald-700"
                               : "bg-rose-600 hover:bg-rose-700"
                           }`}
                         >
-                          {user.panel_permission === 1 ? "Allowed" : "Blocked"}
+                          {Number(user.panel_permission) === 1 ? "Allowed" : "Blocked"}
                         </button>
                       </td>
                     </>
@@ -525,10 +535,10 @@ export default function AdminUsers() {
                     <button
                       onClick={() => togglePermission(user)}
                       className={`ml-2 px-2 py-1 rounded text-white text-xs font-medium ${
-                        user.can_create_users === 1 ? "bg-green-600" : "bg-red-600"
+                        Number(user.can_create_users) === 1 ? "bg-green-600" : "bg-red-600"
                       }`}
                     >
-                      {user.can_create_users === 1 ? "Active" : "Inactive"}
+                      {Number(user.can_create_users) === 1 ? "Active" : "Inactive"}
                     </button>
                   </div>
 
@@ -537,10 +547,10 @@ export default function AdminUsers() {
                     <button
                       onClick={() => togglePanelPermission(user)}
                       className={`ml-2 px-2 py-1 rounded text-white text-xs font-medium ${
-                        user.panel_permission === 1 ? "bg-emerald-600" : "bg-rose-600"
+                        Number(user.panel_permission) === 1 ? "bg-emerald-600" : "bg-rose-600"
                       }`}
                     >
-                      {user.panel_permission === 1 ? "Allowed" : "Blocked"}
+                      {Number(user.panel_permission) === 1 ? "Allowed" : "Blocked"}
                     </button>
                   </div>
                 </>

@@ -37,8 +37,6 @@ Route::middleware(['auth:sanctum', CheckPanelAccess::class, 'admin.ip'])->group(
     Route::get('/profile', [UserController::class, 'showProfile']);
     Route::put('/profile', [UserController::class, 'updateProfile']);
     Route::get('/user', fn(Request $request) => $request->user());
-    Route::get('/ip-access/config', [UserController::class, 'ipAccessConfig']);
-    Route::patch('/ip-access/config', [UserController::class, 'updateIpAccessConfig']);
     Route::apiResource('users', UserController::class);
     Route::patch('/users/{id}/toggle-permission', [UserController::class, 'togglePermission']);
     Route::patch('/users/{user}/cities', [UserController::class, 'updateUserCities']);

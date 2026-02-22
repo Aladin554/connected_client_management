@@ -70,7 +70,6 @@ const AppSidebar: React.FC = () => {
             { name: "Service Area", path: "/dashboard/service-area" },
             { name: "Country Labels", path: "/dashboard/country-labels" },
             { name: "Intake Labels", path: "/dashboard/intake-labels" },
-            // { name: "IP Access", path: "/dashboard/ip-access" },
           ],
         },
       ]

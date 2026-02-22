@@ -24,11 +24,16 @@ class User extends Authenticatable
         'report_notification',
         'last_login_at',
         'can_create_users',
+        'allowed_ips',
     ];
 
     protected $hidden = [
         'password',
         'remember_token',
+    ];
+
+    protected $appends = [
+        'panel_permission',
     ];
 
     protected $casts = [
@@ -37,7 +42,9 @@ class User extends Authenticatable
         'email_verified_at' => 'datetime',
         'role_id'           => 'integer',
         'can_create_users' => 'integer',
+        'permission' => 'integer',
         'report_notification' => 'integer',
+        'allowed_ips' => 'array',
     ];
 
     /**

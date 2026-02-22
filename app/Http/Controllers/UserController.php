@@ -5,8 +5,6 @@ namespace App\Http\Controllers;
 use App\Models\Board;
 use App\Models\BoardList;
 use App\Models\User;
-use App\Models\Role;
-use App\Models\SystemSetting;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
@@ -41,7 +39,7 @@ class UserController extends Controller
             return true;
         }
 
-        if ($this->isAdmin() && $user->role->name === 'user') {
+        if ($this->isAdmin() && in_array((int) $user->role_id, [3, 4], true)) {
             return true;
         }
 
@@ -68,8 +66,11 @@ class UserController extends Controller
         }
 
         if ($this->isAdmin()) {
-            // Admin can view role IDs 2, 3 and 4.
-            return $query->whereIn('role_id', [2, 3, 4]);
+            // Admin can view role IDs 3 and 4, plus own account.
+            return $query->where(function ($q) use ($authUser) {
+                $q->whereIn('role_id', [3, 4])
+                  ->orWhere('users.id', $authUser->id);
+            });
         }
 
         // Role 3 can view role 3 and 4 users.
@@ -97,6 +98,8 @@ class UserController extends Controller
                 : 'required|email|unique:users,email',
             'password'   => $isUpdate ? 'sometimes|min:6' : 'required|min:6',
             'role_id'    => $isUpdate ? 'sometimes|exists:roles,id' : 'required|exists:roles,id',
+            'allowed_ips' => $isUpdate ? 'sometimes|array' : 'nullable|array',
+            'allowed_ips.*' => 'nullable|ip',
         ];
     }
 
@@ -114,32 +117,30 @@ class UserController extends Controller
     // --- List Users ---
     public function index(): JsonResponse
     {
-        $users = $this->filterUsersForAuth()->get();
+        $users = $this->filterUsersForAuth()
+            ->get()
+            ->map(function (User $user) {
+                $payload = $user->toArray();
+                $payload['can_create_users'] = (int) ($user->can_create_users ?? 0);
+                $payload['panel_permission'] = (int) ($user->panel_permission ?? 0);
+
+                return $payload;
+            });
 
         return response()->json($users);
-    }
-
-    // --- Get global IP allowlist for roles 2, 3, 4 ---
-    public function ipAccessConfig(): JsonResponse
-    {
-        if (!$this->isSuperAdmin()) {
-            return response()->json(['message' => 'Forbidden'], 403);
-        }
-
-        return response()->json([
-            'allowed_ips' => SystemSetting::getIpAllowlist(),
-        ]);
     }
 
     // --- Create User ---
     public function store(Request $request): JsonResponse
     {
+        if (!$this->isSuperAdmin() && $request->has('allowed_ips')) {
+            return response()->json(['message' => 'Only superadmin can assign IP allowlist'], 403);
+        }
+
         $request->validate($this->validationRules());
 
-        $role = Role::find($request->role_id);
-
-        if ($this->isAdmin() && $role->name !== 'user') {
-            return response()->json(['message' => 'Admins can only create users'], 403);
+        if ($this->isAdmin() && !in_array((int) $request->role_id, [3, 4], true)) {
+            return response()->json(['message' => 'Admins can only create roles 3 and 4 users'], 403);
         }
 
         try {
@@ -151,6 +152,9 @@ class UserController extends Controller
                 'email'      => $request->email,
                 'role_id'    => $request->role_id,
                 'password'   => Hash::make($plainPassword),
+                'allowed_ips' => $this->isSuperAdmin()
+                    ? $this->sanitizeAllowedIps($request->input('allowed_ips', []))
+                    : [],
             ]);
 
             // Send welcome / credentials email
@@ -191,6 +195,10 @@ class UserController extends Controller
             return response()->json(['message' => 'User not found'], 404);
         }
 
+        if ((int) $user->id === (int) $this->authUser()->id) {
+            return response()->json($user);
+        }
+
         if (!$this->canManage($user)) {
             return response()->json(['message' => 'Forbidden'], 403);
         }
@@ -207,16 +215,25 @@ class UserController extends Controller
             return response()->json(['message' => 'User not found'], 404);
         }
 
-        if (!$this->canManage($user)) {
+        $isSelf = (int) $user->id === (int) $this->authUser()->id;
+
+        if (!$isSelf && !$this->canManage($user)) {
             return response()->json(['message' => 'Forbidden'], 403);
+        }
+
+        if (!$this->isSuperAdmin() && $request->has('allowed_ips')) {
+            return response()->json(['message' => 'Only superadmin can assign IP allowlist'], 403);
+        }
+
+        if ($isSelf && !$this->isSuperAdmin() && $request->has('role_id') && (int) $request->role_id !== (int) $user->role_id) {
+            return response()->json(['message' => 'You cannot change your own role'], 403);
         }
 
         $request->validate($this->validationRules(true, $id));
 
-        if ($request->role_id) {
-            $role = Role::find($request->role_id);
-            if ($this->isAdmin() && $role->name !== 'user') {
-                return response()->json(['message' => 'Admins can only assign user role'], 403);
+        if (!$isSelf && $request->role_id) {
+            if ($this->isAdmin() && !in_array((int) $request->role_id, [3, 4], true)) {
+                return response()->json(['message' => 'Admins can only assign roles 3 and 4'], 403);
             }
         }
 
@@ -224,11 +241,15 @@ class UserController extends Controller
             'first_name' => $request->first_name ?? $user->first_name,
             'last_name'  => $request->last_name ?? $user->last_name,
             'email'      => $request->email ?? $user->email,
-            'role_id'    => $request->role_id ?? $user->role_id,
+            'role_id'    => (!$isSelf && $request->has('role_id')) ? (int) $request->role_id : $user->role_id,
         ]);
 
         if ($request->password) {
             $user->password = Hash::make($request->password);
+        }
+
+        if ($this->isSuperAdmin() && $request->has('allowed_ips')) {
+            $user->allowed_ips = $this->sanitizeAllowedIps($request->input('allowed_ips', []));
         }
 
         try {
@@ -249,35 +270,6 @@ class UserController extends Controller
         }
     }
 
-    // --- Update global IP allowlist for roles 2, 3, 4 ---
-    public function updateIpAccessConfig(Request $request): JsonResponse
-    {
-        if (!$this->isSuperAdmin()) {
-            return response()->json(['message' => 'Forbidden'], 403);
-        }
-
-        $validated = $request->validate([
-            'allowed_ips' => 'required|array|min:1',
-            'allowed_ips.*' => 'nullable|ip',
-        ]);
-
-        $allowedIps = $this->sanitizeAllowedIps($validated['allowed_ips'] ?? []);
-        if (empty($allowedIps)) {
-            return response()->json([
-                'message' => 'Please provide at least one valid IP address.',
-            ], 422);
-        }
-
-        SystemSetting::setIpAllowlist($allowedIps);
-
-        // Global-only mode: do not mirror IPs into per-user `allowed_ips`.
-
-        return response()->json([
-            'message' => 'Global IP access updated successfully',
-            'allowed_ips' => $allowedIps,
-        ]);
-    }
-
     // --- Delete User ---
     public function destroy(int $id): JsonResponse
     {
@@ -285,6 +277,10 @@ class UserController extends Controller
 
         if (!$user) {
             return response()->json(['message' => 'User not found'], 404);
+        }
+
+        if ((int) $user->id === (int) $this->authUser()->id) {
+            return response()->json(['message' => 'You cannot delete your own account'], 403);
         }
 
         if (!$this->canManage($user)) {
@@ -389,6 +385,10 @@ class UserController extends Controller
     public function togglePermission(Request $request, int $id): JsonResponse
     {
         $user = User::findOrFail($id);
+
+        if ((int) $user->id === (int) $this->authUser()->id) {
+            return response()->json(['message' => 'You cannot change your own permissions'], 403);
+        }
 
         if (!$this->canManage($user)) {
             return response()->json(['message' => 'Forbidden'], 403);

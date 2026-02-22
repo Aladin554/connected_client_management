@@ -4,7 +4,6 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use App\Models\User;
-use App\Models\SystemSetting;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Password; // For password resets
 use Illuminate\Auth\Events\PasswordReset;
@@ -46,9 +45,9 @@ class AuthController extends Controller
         // Dynamic IP restriction for roles 2, 3, 4.
         $clientIp = $this->getRealIp($request);
         if ($this->shouldEnforceIpFor($user)) {
-            $allowedIps = SystemSetting::getIpAllowlist();
+            $allowedIps = $this->sanitizeAllowedIps($user->allowed_ips ?? []);
 
-            if (empty($allowedIps) || !in_array($clientIp, $allowedIps, true)) {
+            if (!empty($allowedIps) && !in_array($clientIp, $allowedIps, true)) {
                 return response()->json([
                     'message' => 'Login blocked from this IP. Please contact administrator.',
                     'your_ip' => $clientIp,
@@ -157,5 +156,16 @@ class AuthController extends Controller
         }
 
         return (string) $request->ip();
+    }
+
+    protected function sanitizeAllowedIps($value): array
+    {
+        if (!is_array($value)) {
+            return [];
+        }
+
+        return array_values(array_unique(array_filter(array_map(static function ($ip) {
+            return trim((string) $ip);
+        }, $value))));
     }
 }
