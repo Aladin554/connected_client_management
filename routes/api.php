@@ -109,5 +109,37 @@ Route::middleware(['auth:sanctum', CheckPanelAccess::class, 'admin.ip'])->group(
     // ────────────────────────────────────────────────
     // Debug / Helpers
     // ────────────────────────────────────────────────
-    Route::get('/show-ip', fn (Request $request) => $request->ip());
+    Route::get('/show-ip', function (Request $request) {
+        $ipSources = [
+            $request->header('X-Forwarded-For'),
+            $request->header('CF-Connecting-IP'),
+            $request->header('X-Real-IP'),
+            $request->server('REMOTE_ADDR'),
+            $request->ip(),
+        ];
+
+        $resolvedIp = (string) $request->ip();
+        foreach ($ipSources as $source) {
+            if (!is_string($source) || trim($source) === '') {
+                continue;
+            }
+
+            foreach (explode(',', $source) as $part) {
+                $candidate = trim($part);
+                if (filter_var($candidate, FILTER_VALIDATE_IP)) {
+                    $resolvedIp = $candidate;
+                    break 2;
+                }
+            }
+        }
+
+        return response()->json([
+            'resolved_ip_for_security' => $resolvedIp,
+            'your_ip' => $request->ip(),
+            'remote_addr' => $request->server('REMOTE_ADDR'),
+            'x_forwarded_for' => $request->header('X-Forwarded-For'),
+            'cf_connecting_ip' => $request->header('CF-Connecting-IP'),
+            'x_real_ip' => $request->header('X-Real-IP'),
+        ]);
+    });
 });

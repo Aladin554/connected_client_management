@@ -247,9 +247,31 @@ class BoardCardController extends Controller
         return response()->json($card, 201);
     }
 
-    // UPDATE card (general)
-    public function update(Request $request, BoardCard $boardCard)
+    public function show(BoardList $boardList, BoardCard $boardCard)
     {
+        if ((int) $boardCard->board_list_id !== (int) $boardList->id) {
+            return response()->json(['message' => 'Card not found in this list'], 404);
+        }
+
+        $this->assertCanAccessBoardCard($boardCard);
+
+        return response()->json(
+            $boardCard->load([
+                'members:id,first_name,last_name,role_id,email',
+                'countryLabel:id,name',
+                'intakeLabel:id,name',
+                'serviceArea:id,name',
+            ])
+        );
+    }
+
+    // UPDATE card (general)
+    public function update(Request $request, BoardList $boardList, BoardCard $boardCard)
+    {
+        if ((int) $boardCard->board_list_id !== (int) $boardList->id) {
+            return response()->json(['message' => 'Card not found in this list'], 404);
+        }
+
         $this->assertCanAccessBoardCard($boardCard);
         $boardCard->loadMissing('boardList');
 
@@ -385,8 +407,12 @@ class BoardCardController extends Controller
     }
 
     // DELETE card
-    public function destroy(BoardCard $boardCard)
+    public function destroy(BoardList $boardList, BoardCard $boardCard)
     {
+        if ((int) $boardCard->board_list_id !== (int) $boardList->id) {
+            return response()->json(['message' => 'Card not found in this list'], 404);
+        }
+
         $this->assertCanAccessBoardCard($boardCard);
 
         $boardCard->delete();

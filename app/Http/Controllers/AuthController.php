@@ -143,15 +143,24 @@ class AuthController extends Controller
 
     protected function getRealIp(Request $request): string
     {
-        $forwarded = $request->header('CF-Connecting-IP')
-            ?? $request->header('X-Forwarded-For')
-            ?? $request->header('X-Real-IP');
+        $ipSources = [
+            $request->header('X-Forwarded-For'),
+            $request->header('CF-Connecting-IP'),
+            $request->header('X-Real-IP'),
+            $request->server('REMOTE_ADDR'),
+            $request->ip(),
+        ];
 
-        if (is_string($forwarded) && $forwarded !== '') {
-            $parts = explode(',', $forwarded);
-            $candidate = trim($parts[0]);
-            if ($candidate !== '') {
-                return $candidate;
+        foreach ($ipSources as $source) {
+            if (!is_string($source) || trim($source) === '') {
+                continue;
+            }
+
+            foreach (explode(',', $source) as $part) {
+                $candidate = trim($part);
+                if (filter_var($candidate, FILTER_VALIDATE_IP)) {
+                    return $candidate;
+                }
             }
         }
 
