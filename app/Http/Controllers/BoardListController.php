@@ -71,7 +71,7 @@ class BoardListController extends Controller
 
         $validated = $request->validate([
             'title'    => 'required|string|max:255',
-            'category' => 'nullable|integer|in:0,1,2',
+            'category' => 'nullable|integer|in:0,1,2,3',
             'position' => 'nullable|integer|min:0',
         ]);
 
@@ -119,7 +119,7 @@ class BoardListController extends Controller
 
         $validated = $request->validate([
             'title'    => 'sometimes|required|string|max:255',
-            'category' => 'sometimes|integer|in:0,1,2',
+            'category' => 'sometimes|integer|in:0,1,2,3',
             'position' => 'sometimes|integer|min:0',
         ]);
 

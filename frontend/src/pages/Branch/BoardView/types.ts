@@ -26,7 +26,7 @@ export interface List {
   id: number;
   board_id: number;
   title: string;
-  category?: 0 | 1 | 2 | null;
+  category?: 0 | 1 | 2 | 3 | null;
   position: number;
   created_at: string;
   updated_at: string;

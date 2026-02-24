@@ -259,7 +259,7 @@ const AppSidebar: React.FC = () => {
           !isExpanded && !isHovered && !isMobileOpen ? "lg:justify-center" : "justify-start"
         }`}
       >
-        <Link to="/dashboard" className="group">
+        <Link to="/choose-dashboard" className="group">
     {isExpanded || isHovered || isMobileOpen ? (
       <>
         {/* LIGHT MODE */}

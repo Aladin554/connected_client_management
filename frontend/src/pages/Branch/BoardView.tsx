@@ -64,7 +64,7 @@ export default function BoardView() {
 
   const [isAddListOpen, setIsAddListOpen] = useState(false);
   const [newListTitle, setNewListTitle] = useState("");
-  const [newListCategory, setNewListCategory] = useState<0 | 1 | 2>(0);
+  const [newListCategory, setNewListCategory] = useState<0 | 1 | 2 | 3>(3);
 
   const [activeCardListId, setActiveCardListId] = useState<number | null>(null);
   const [newCardInvoice, setNewCardInvoice] = useState("");
@@ -90,6 +90,12 @@ export default function BoardView() {
       board_list?: { id: number; title: string } | null;
     })[]
   >([]);
+  const [archivedSearchTerm, setArchivedSearchTerm] = useState("");
+  const [archivedSelectedCountryFilterIds, setArchivedSelectedCountryFilterIds] = useState<number[]>([]);
+  const [archivedSelectedIntakeFilterIds, setArchivedSelectedIntakeFilterIds] = useState<number[]>([]);
+  const [archivedSelectedServiceAreaFilterIds, setArchivedSelectedServiceAreaFilterIds] = useState<number[]>([]);
+  const [archivedDueDateFilter, setArchivedDueDateFilter] = useState<"all" | "today" | "this_week" | "overdue">("all");
+  const [archivedOpenMultiSelectFilter, setArchivedOpenMultiSelectFilter] = useState<"country" | "intake" | "service" | null>(null);
   const [loadingArchivedCards, setLoadingArchivedCards] = useState(false);
   const [restoringCardId, setRestoringCardId] = useState<number | null>(null);
   const [selectedCountryFilterIds, setSelectedCountryFilterIds] = useState<number[]>([]);
@@ -122,6 +128,12 @@ export default function BoardView() {
     selectedServiceAreaFilterIds.length > 0 ||
     dueDateFilter !== "all";
   const shouldShowMatchCounts = showWildcardMatchCounts || hasActiveFilters;
+  const hasArchivedFilters =
+    archivedSelectedCountryFilterIds.length > 0 ||
+    archivedSelectedIntakeFilterIds.length > 0 ||
+    archivedSelectedServiceAreaFilterIds.length > 0 ||
+    archivedDueDateFilter !== "all";
+  const shouldShowArchivedMatchCounts = archivedSearchTerm.trim().length > 0 || hasArchivedFilters;
 
   const toggleFilterSelection = (
     id: number,
@@ -181,9 +193,163 @@ export default function BoardView() {
   };
 
   const openArchivedModal = async () => {
+    setArchivedSearchTerm("");
+    setArchivedSelectedCountryFilterIds([]);
+    setArchivedSelectedIntakeFilterIds([]);
+    setArchivedSelectedServiceAreaFilterIds([]);
+    setArchivedDueDateFilter("all");
+    setArchivedOpenMultiSelectFilter(null);
     setShowArchivedModal(true);
     await fetchArchivedCards();
   };
+
+  const filteredArchivedCards = useMemo(() => {
+    const normalizedSearch = archivedSearchTerm.trim().toLowerCase();
+    const isWildcardSearch = normalizedSearch === "*";
+    const hasTextSearch = normalizedSearch.length > 0 && !isWildcardSearch;
+    const searchTerms = hasTextSearch ? normalizedSearch.split(/\s+/).filter(Boolean) : [];
+
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const dayOfWeek = today.getDay(); // 0 = Sun
+    const daysSinceMonday = (dayOfWeek + 6) % 7;
+    const weekStart = new Date(today);
+    weekStart.setDate(today.getDate() - daysSinceMonday);
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekStart.getDate() + 6);
+
+    const cardMatchesDueDateFilter = (card: Card) => {
+      if (archivedDueDateFilter === "all") return true;
+
+      const dueDate = parseDateOnly(card.due_date);
+      if (!dueDate) return false;
+
+      if (archivedDueDateFilter === "today") {
+        return dueDate.toDateString() === today.toDateString();
+      }
+      if (archivedDueDateFilter === "this_week") {
+        return dueDate >= weekStart && dueDate <= weekEnd;
+      }
+      if (archivedDueDateFilter === "overdue") {
+        return dueDate < today;
+      }
+      return true;
+    };
+
+    return archivedCards.filter((card) => {
+      const list = card.boardList || card.board_list;
+
+      const countryIds =
+        Array.isArray(card.country_label_ids) && card.country_label_ids.length > 0
+          ? card.country_label_ids
+          : card.country_label_id != null
+          ? [card.country_label_id]
+          : [];
+
+      const serviceAreaIds =
+        Array.isArray(card.service_area_ids) && card.service_area_ids.length > 0
+          ? card.service_area_ids
+          : card.service_area_id != null
+          ? [card.service_area_id]
+          : [];
+
+      if (
+        archivedSelectedCountryFilterIds.length > 0 &&
+        !countryIds.some((countryId) => archivedSelectedCountryFilterIds.includes(countryId))
+      ) {
+        return false;
+      }
+      if (
+        archivedSelectedIntakeFilterIds.length > 0 &&
+        (card.intake_label_id == null || !archivedSelectedIntakeFilterIds.includes(card.intake_label_id))
+      ) {
+        return false;
+      }
+      if (
+        archivedSelectedServiceAreaFilterIds.length > 0 &&
+        !serviceAreaIds.some((serviceAreaId) => archivedSelectedServiceAreaFilterIds.includes(serviceAreaId))
+      ) {
+        return false;
+      }
+      if (!cardMatchesDueDateFilter(card)) {
+        return false;
+      }
+      if (!hasTextSearch) {
+        return true;
+      }
+
+      const countryLabelName = countryIds
+        .map((id) => countryLabelMap[id] || "")
+        .filter(Boolean)
+        .join(" ");
+      const intakeLabelName =
+        card.intake_label_id != null
+          ? intakeLabelMap[card.intake_label_id] || ""
+          : "";
+      const serviceAreaName = serviceAreaIds
+        .map((id) => serviceAreaMap[id] || "")
+        .filter(Boolean)
+        .join(" ");
+      const paymentTerms = card.payment_done
+        ? "visa payment paid done"
+        : "visa payment unpaid pending";
+      const dependantPaymentTerms = card.dependant_payment_done
+        ? "dependant payment dependant-paid dependant-done"
+        : "dependant payment dependant-unpaid dependant-pending";
+      const listTitle = list?.title || "Unknown List";
+      const memberNames = (card.members || [])
+        .map((member) => `${member.first_name || ""} ${member.last_name || ""}`.trim())
+        .filter(Boolean)
+        .join(" ");
+      const haystack = [
+        card.invoice,
+        card.first_name,
+        card.last_name,
+        card.title,
+        card.description,
+        listTitle,
+        countryLabelName,
+        intakeLabelName,
+        serviceAreaName,
+        paymentTerms,
+        dependantPaymentTerms,
+        memberNames,
+      ]
+        .filter((value): value is string => Boolean(value))
+        .join(" ")
+        .toLowerCase();
+
+      return searchTerms.every((term) => {
+        if (term === "paid" || term === "done") {
+          return card.payment_done === true;
+        }
+        if (term === "unpaid" || term === "pending") {
+          return card.payment_done !== true;
+        }
+        if (term === "dependant-paid" || term === "dependent-paid" || term === "dependant-done") {
+          return card.dependant_payment_done === true;
+        }
+        if (
+          term === "dependant-unpaid" ||
+          term === "dependent-unpaid" ||
+          term === "dependant-pending"
+        ) {
+          return card.dependant_payment_done !== true;
+        }
+        return haystack.includes(term);
+      });
+    });
+  }, [
+    archivedCards,
+    archivedSearchTerm,
+    archivedSelectedCountryFilterIds,
+    archivedSelectedIntakeFilterIds,
+    archivedSelectedServiceAreaFilterIds,
+    archivedDueDateFilter,
+    countryLabelMap,
+    intakeLabelMap,
+    serviceAreaMap,
+  ]);
 
   const fetchBoardActivities = async (nextTab: "all" | "comment" = activityTab) => {
     if (!boardId) return;
@@ -614,7 +780,7 @@ export default function BoardView() {
     setBoard((prev) => (prev ? { ...prev, lists: [...prev.lists, tempList] } : null));
 
     setNewListTitle("");
-    setNewListCategory(0);
+    setNewListCategory(3);
     setIsAddListOpen(false);
 
     try {
@@ -1053,9 +1219,10 @@ export default function BoardView() {
     matchedByTitle: boolean;
   };
 
-  const { admissionLists, visaLists, dependantVisaLists, totalMatchedCards } = useMemo(() => {
+  const { laterIntakeLists, admissionLists, visaLists, dependantVisaLists, totalMatchedCards } = useMemo(() => {
     if (!board) {
       return {
+        laterIntakeLists: [] as ListWithSearchMeta[],
         admissionLists: [] as ListWithSearchMeta[],
         visaLists: [] as ListWithSearchMeta[],
         dependantVisaLists: [] as ListWithSearchMeta[],
@@ -1234,6 +1401,9 @@ export default function BoardView() {
         });
     };
 
+    const laterIntakeSource = board.lists
+      .filter((list) => list.category === 3)
+      .sort((a, b) => a.position - b.position);
     const admissionSource = board.lists
       .filter((list) => (list.category ?? 0) === 0)
       .sort((a, b) => a.position - b.position);
@@ -1244,12 +1414,19 @@ export default function BoardView() {
       .filter((list) => list.category === 2)
       .sort((a, b) => a.position - b.position);
 
+    const filteredLaterIntake = filterLists(laterIntakeSource);
     const filteredAdmission = filterLists(admissionSource);
     const filteredVisa = filterLists(visaSource);
     const filteredDependantVisa = filterLists(dependantVisaSource);
-    const allFiltered = [...filteredAdmission, ...filteredVisa, ...filteredDependantVisa];
+    const allFiltered = [
+      ...filteredLaterIntake,
+      ...filteredAdmission,
+      ...filteredVisa,
+      ...filteredDependantVisa,
+    ];
 
     return {
+      laterIntakeLists: filteredLaterIntake,
       admissionLists: filteredAdmission,
       visaLists: filteredVisa,
       dependantVisaLists: filteredDependantVisa,
@@ -1271,10 +1448,17 @@ export default function BoardView() {
 
   const addCardAllowedListId = useMemo(() => {
     if (!board || board.lists.length === 0) return null;
-    const firstList = [...board.lists]
+    const firstLaterIntakeList = [...board.lists]
+      .filter((list) => list.category === 3)
+      .sort((a, b) => a.position - b.position)[0];
+    if (firstLaterIntakeList) {
+      return firstLaterIntakeList.id;
+    }
+
+    const firstAdmissionList = [...board.lists]
       .filter((list) => (list.category ?? 0) === 0)
       .sort((a, b) => a.position - b.position)[0];
-    return firstList?.id ?? null;
+    return firstAdmissionList?.id ?? null;
   }, [board]);
 
   if (loading) return <Loader message="Loading board..." />;
@@ -1318,11 +1502,11 @@ export default function BoardView() {
                 }
               }}
               disabled={savingListId === list.id}
-              className="h-9 w-full rounded-md border border-indigo-300 bg-white px-3 text-base font-semibold text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              className="h-9 w-full rounded-md border border-indigo-300 bg-white px-3 text-[14px] leading-5 font-semibold text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-400"
             />
           ) : (
             <h3
-              className={`font-semibold text-lg truncate ${
+              className={`min-w-0 font-semibold text-[15px] leading-5 whitespace-normal break-words ${
                 canEditListTitle ? "cursor-text hover:underline underline-offset-4" : ""
               } ${isSearching && list.matchedByTitle ? "text-indigo-700" : ""}`}
               onDoubleClick={() => startEditListTitle(list)}
@@ -1539,7 +1723,7 @@ export default function BoardView() {
         <div className="flex items-center gap-4">
           <button
             type="button"
-            onClick={() => navigate("/")}
+            onClick={() => navigate("/choose-dashboard")}
             className="h-7 flex items-center cursor-pointer"
             title="Go to home"
           >
@@ -1878,6 +2062,32 @@ export default function BoardView() {
             <div className="min-h-full p-6 flex gap-6 min-w-max">
               <div className="min-h-0 flex gap-6">
                 <div className="min-w-[420px] flex flex-col gap-3">
+                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-sky-100 text-sky-800 text-xs font-semibold uppercase tracking-wide">
+                    Later Intake
+                  </div>
+                  <div className="flex-1">
+                    <SortableContext
+                      items={laterIntakeLists.map((list) => `list-${list.id}`)}
+                      strategy={horizontalListSortingStrategy}
+                    >
+                      <div className="flex gap-6 min-w-max items-start pb-2 pr-2">
+                        {laterIntakeLists.length > 0 ? (
+                          laterIntakeLists.map((list) =>
+                            renderListColumn(list, list.id === addCardAllowedListId)
+                          )
+                        ) : (
+                          <div className="w-80 h-28 rounded-xl border border-dashed border-sky-300 bg-sky-50/50 text-sky-800 text-sm flex items-center justify-center">
+                            {isSearching || hasActiveFilters ? "No matching cards in later intake" : "No later intake lists"}
+                          </div>
+                        )}
+                      </div>
+                    </SortableContext>
+                  </div>
+                </div>
+
+                <div className="self-stretch border-l-2 border-dotted border-indigo-300/70" />
+
+                <div className="min-w-[420px] flex flex-col gap-3">
                   <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-semibold uppercase tracking-wide">
                     Admission
                   </div>
@@ -1958,7 +2168,18 @@ export default function BoardView() {
               {isAddListOpen && (
                 <div className="w-80 shrink-0 self-start">
                   <div className="bg-white rounded-xl p-4 border shadow-md">
-                    <div className="grid grid-cols-3 gap-2 mb-3">
+                    <div className="grid grid-cols-2 gap-2 mb-3">
+                      <button
+                        type="button"
+                        onClick={() => setNewListCategory(3)}
+                        className={`h-9 rounded-md text-sm font-semibold border transition ${
+                          newListCategory === 3
+                            ? "bg-sky-600 text-white border-sky-600"
+                            : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+                        }`}
+                      >
+                        Later Intake
+                      </button>
                       <button
                         type="button"
                         onClick={() => setNewListCategory(0)}
@@ -2012,7 +2233,7 @@ export default function BoardView() {
                         onClick={() => {
                           setIsAddListOpen(false);
                           setNewListTitle("");
-                          setNewListCategory(0);
+                          setNewListCategory(3);
                         }}
                         className="text-sm text-gray-600 hover:underline"
                       >
@@ -2072,7 +2293,238 @@ export default function BoardView() {
                   <div className="py-10 text-center text-sm text-gray-500">No archived cards found.</div>
                 ) : (
                   <div className="space-y-3">
-                    {archivedCards.map((card) => {
+                    <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-semibold text-gray-800">Card Filters</p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setArchivedSearchTerm("");
+                            setArchivedSelectedCountryFilterIds([]);
+                            setArchivedSelectedIntakeFilterIds([]);
+                            setArchivedSelectedServiceAreaFilterIds([]);
+                            setArchivedDueDateFilter("all");
+                            setArchivedOpenMultiSelectFilter(null);
+                          }}
+                          className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
+                        >
+                          Reset
+                        </button>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                          Search
+                        </label>
+                        <input
+                          value={archivedSearchTerm}
+                          onChange={(e) => setArchivedSearchTerm(e.target.value)}
+                          placeholder="Type to filter cards, use * for all cards"
+                          className="h-9 w-full rounded-md border border-gray-300 px-2.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                        />
+                      </div>
+
+                      <div className="grid gap-3 lg:grid-cols-4">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">
+                            Country ({archivedSelectedCountryFilterIds.length})
+                          </label>
+                          <div className="relative">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setArchivedOpenMultiSelectFilter((prev) =>
+                                  prev === "country" ? null : "country"
+                                )
+                              }
+                              className="h-9 w-full rounded-md border border-gray-300 px-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white text-gray-800 flex items-center justify-between"
+                            >
+                              <span className="truncate text-left">
+                                {getMultiFilterSummary(
+                                  archivedSelectedCountryFilterIds,
+                                  countryFilterOptions,
+                                  "Select"
+                                )}
+                              </span>
+                              <ChevronDown
+                                size={15}
+                                className={`text-gray-500 transition-transform ${
+                                  archivedOpenMultiSelectFilter === "country" ? "rotate-180" : ""
+                                }`}
+                              />
+                            </button>
+
+                            {archivedOpenMultiSelectFilter === "country" && (
+                              <div className="absolute left-0 right-0 top-full mt-1 max-h-40 overflow-y-auto rounded-md border border-gray-300 bg-white shadow-lg z-50">
+                                {countryFilterOptions.length === 0 ? (
+                                  <div className="px-2.5 py-2 text-xs text-gray-500">No options</div>
+                                ) : (
+                                  countryFilterOptions.map((item) => (
+                                    <label
+                                      key={`archived-country-filter-${item.id}`}
+                                      className="flex items-center gap-2 px-2.5 py-1.5 text-sm text-gray-800 hover:bg-gray-50 cursor-pointer"
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={archivedSelectedCountryFilterIds.includes(item.id)}
+                                        onChange={() =>
+                                          toggleFilterSelection(item.id, setArchivedSelectedCountryFilterIds)
+                                        }
+                                        className="h-3.5 w-3.5 rounded text-indigo-600"
+                                      />
+                                      <span>{item.name}</span>
+                                    </label>
+                                  ))
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">
+                            Intake ({archivedSelectedIntakeFilterIds.length})
+                          </label>
+                          <div className="relative">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setArchivedOpenMultiSelectFilter((prev) =>
+                                  prev === "intake" ? null : "intake"
+                                )
+                              }
+                              className="h-9 w-full rounded-md border border-gray-300 px-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white text-gray-800 flex items-center justify-between"
+                            >
+                              <span className="truncate text-left">
+                                {getMultiFilterSummary(
+                                  archivedSelectedIntakeFilterIds,
+                                  intakeFilterOptions,
+                                  "Select"
+                                )}
+                              </span>
+                              <ChevronDown
+                                size={15}
+                                className={`text-gray-500 transition-transform ${
+                                  archivedOpenMultiSelectFilter === "intake" ? "rotate-180" : ""
+                                }`}
+                              />
+                            </button>
+
+                            {archivedOpenMultiSelectFilter === "intake" && (
+                              <div className="absolute left-0 right-0 top-full mt-1 max-h-40 overflow-y-auto rounded-md border border-gray-300 bg-white shadow-lg z-50">
+                                {intakeFilterOptions.length === 0 ? (
+                                  <div className="px-2.5 py-2 text-xs text-gray-500">No options</div>
+                                ) : (
+                                  intakeFilterOptions.map((item) => (
+                                    <label
+                                      key={`archived-intake-filter-${item.id}`}
+                                      className="flex items-center gap-2 px-2.5 py-1.5 text-sm text-gray-800 hover:bg-gray-50 cursor-pointer"
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={archivedSelectedIntakeFilterIds.includes(item.id)}
+                                        onChange={() =>
+                                          toggleFilterSelection(item.id, setArchivedSelectedIntakeFilterIds)
+                                        }
+                                        className="h-3.5 w-3.5 rounded text-indigo-600"
+                                      />
+                                      <span>{item.name}</span>
+                                    </label>
+                                  ))
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">
+                            Service ({archivedSelectedServiceAreaFilterIds.length})
+                          </label>
+                          <div className="relative">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setArchivedOpenMultiSelectFilter((prev) =>
+                                  prev === "service" ? null : "service"
+                                )
+                              }
+                              className="h-9 w-full rounded-md border border-gray-300 px-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white text-gray-800 flex items-center justify-between"
+                            >
+                              <span className="truncate text-left">
+                                {getMultiFilterSummary(
+                                  archivedSelectedServiceAreaFilterIds,
+                                  serviceAreaFilterOptions,
+                                  "Select"
+                                )}
+                              </span>
+                              <ChevronDown
+                                size={15}
+                                className={`text-gray-500 transition-transform ${
+                                  archivedOpenMultiSelectFilter === "service" ? "rotate-180" : ""
+                                }`}
+                              />
+                            </button>
+
+                            {archivedOpenMultiSelectFilter === "service" && (
+                              <div className="absolute left-0 right-0 top-full mt-1 max-h-40 overflow-y-auto rounded-md border border-gray-300 bg-white shadow-lg z-50">
+                                {serviceAreaFilterOptions.length === 0 ? (
+                                  <div className="px-2.5 py-2 text-xs text-gray-500">No options</div>
+                                ) : (
+                                  serviceAreaFilterOptions.map((item) => (
+                                    <label
+                                      key={`archived-service-filter-${item.id}`}
+                                      className="flex items-center gap-2 px-2.5 py-1.5 text-sm text-gray-800 hover:bg-gray-50 cursor-pointer"
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={archivedSelectedServiceAreaFilterIds.includes(item.id)}
+                                        onChange={() =>
+                                          toggleFilterSelection(item.id, setArchivedSelectedServiceAreaFilterIds)
+                                        }
+                                        className="h-3.5 w-3.5 rounded text-indigo-600"
+                                      />
+                                      <span>{item.name}</span>
+                                    </label>
+                                  ))
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Due Date</label>
+                          <select
+                            value={archivedDueDateFilter}
+                            onChange={(e) =>
+                              setArchivedDueDateFilter(
+                                e.target.value as "all" | "today" | "this_week" | "overdue"
+                              )
+                            }
+                            className="h-9 w-full rounded-md border border-gray-300 px-2.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                          >
+                            <option value="all">Select</option>
+                            <option value="this_week">This Week</option>
+                            <option value="today">Today</option>
+                            <option value="overdue">Overdue</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {shouldShowArchivedMatchCounts && (
+                        <p className="text-xs font-medium text-gray-600">
+                          {filteredArchivedCards.length}{" "}
+                          {filteredArchivedCards.length === 1 ? "card" : "cards"} match current filters
+                        </p>
+                      )}
+                    </div>
+
+                    {filteredArchivedCards.length === 0 ? (
+                      <div className="py-8 text-center text-sm text-gray-500">
+                        No archived cards match the current filter.
+                      </div>
+                    ) : (
+                      filteredArchivedCards.map((card) => {
                       const listTitle = card.boardList?.title || card.board_list?.title || "Unknown List";
                       const cardTitle = `${card.invoice || `ID-${card.id}`} ${card.first_name || ""} ${card.last_name || ""}`.trim();
 
@@ -2103,7 +2555,7 @@ export default function BoardView() {
                           </button>
                         </div>
                       );
-                    })}
+                    }))}
                   </div>
                 )}
               </div>

@@ -12,6 +12,7 @@ class BoardList extends Model
 {
     use HasFactory;
 
+    public const CATEGORY_LATER_INTAKE = 3;
     public const CATEGORY_ADMISSION = 0;
     public const CATEGORY_VISA = 1;
     public const CATEGORY_DEPENDANT_VISA = 2;
