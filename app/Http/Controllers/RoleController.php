@@ -3,39 +3,31 @@
 namespace App\Http\Controllers;
 
 use App\Models\Role;
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 
 class RoleController extends Controller
 {
     /**
-     * Display a listing of roles.
-     *
-     * @return \Illuminate\Http\JsonResponse
+     * Display a listing of assignable roles for current user.
      */
     public function index(): \Illuminate\Http\JsonResponse
     {
         $auth = Auth::user();
+        $authRoleId = (int) ($auth->role_id ?? 0);
 
-        // Superadmin → show all EXCEPT superadmin
-        if ($auth->role->id === 1) {
-
+        // Superadmin can assign all roles except superadmin itself.
+        if ($authRoleId === 1) {
             $roles = Role::where('id', '!=', 1)->get();
+            return response()->json($roles);
         }
 
-        // Admin → only allow "user" (or junior admin if that's what you mean)
-        else if ($auth->role->id === 2) {
-
-            // change 'user' to 'junior admin' if needed
-            $roles = Role::where('name', 'user')->get();
+        // Admin can assign only subadmin (3) and counsellor (4).
+        if ($authRoleId === 2) {
+            $roles = Role::whereIn('id', [3, 4])->get();
+            return response()->json($roles);
         }
 
-        // Normal user → no access
-        else {
-            return response()->json([], 403);
-        }
-
-        return response()->json($roles);
+        // Other roles are not allowed to fetch assignable roles.
+        return response()->json([], 403);
     }
-
 }

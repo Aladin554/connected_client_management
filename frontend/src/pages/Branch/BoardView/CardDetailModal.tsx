@@ -46,6 +46,11 @@ export default function CardDetailModal({
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [editedDueDate, setEditedDueDate] = useState(formatISODateForInput(card.due_date));
   const [savingDueDate, setSavingDueDate] = useState(false);
+  const [isEditingCardIdentity, setIsEditingCardIdentity] = useState(false);
+  const [editedInvoice, setEditedInvoice] = useState(card.invoice || "");
+  const [editedFirstName, setEditedFirstName] = useState(card.first_name || "");
+  const [editedLastName, setEditedLastName] = useState(card.last_name || "");
+  const [savingCardIdentity, setSavingCardIdentity] = useState(false);
   const [paymentDone, setPaymentDone] = useState(Boolean(card.payment_done));
   const [dependantPaymentDone, setDependantPaymentDone] = useState(Boolean(card.dependant_payment_done));
   const [savingPayment, setSavingPayment] = useState(false);
@@ -72,6 +77,7 @@ export default function CardDetailModal({
   const [membersError, setMembersError] = useState<string | null>(null);
 
   const canManageMembers = Number(profile?.role_id) === 1 || Number(profile?.role_id) === 2;
+  const canEditCardIdentity = [1, 2, 3].includes(Number(profile?.role_id));
 
   // Sync when card changes
   useEffect(() => {
@@ -91,6 +97,10 @@ export default function CardDetailModal({
     setActiveLabelType("country");
     setEditedDescription(card.description?.trim() ? card.description : DESCRIPTION_TEMPLATE);
     setEditedDueDate(formatISODateForInput(card.due_date));
+    setIsEditingCardIdentity(false);
+    setEditedInvoice(card.invoice || "");
+    setEditedFirstName(card.first_name || "");
+    setEditedLastName(card.last_name || "");
     setPaymentDone(Boolean(card.payment_done));
     setDependantPaymentDone(Boolean(card.dependant_payment_done));
     setShowCardActionsMenu(false);
@@ -123,13 +133,20 @@ export default function CardDetailModal({
         setShowCardActionsMenu(false);
         return;
       }
+      if (isEditingCardIdentity) {
+        setIsEditingCardIdentity(false);
+        setEditedInvoice(card.invoice || "");
+        setEditedFirstName(card.first_name || "");
+        setEditedLastName(card.last_name || "");
+        return;
+      }
       event.preventDefault();
       onClose();
     };
 
     window.addEventListener("keydown", handleEscClose);
     return () => window.removeEventListener("keydown", handleEscClose);
-  }, [onClose, showCardActionsMenu]);
+  }, [onClose, showCardActionsMenu, isEditingCardIdentity, card.invoice, card.first_name, card.last_name]);
 
   useEffect(() => {
     if (!showCardActionsMenu) return;
@@ -436,6 +453,65 @@ export default function CardDetailModal({
     setIsEditingDescription(true);
   };
 
+  const openCardIdentityEditor = () => {
+    if (!canEditCardIdentity) return;
+    setEditedInvoice(card.invoice || "");
+    setEditedFirstName(card.first_name || "");
+    setEditedLastName(card.last_name || "");
+    setIsEditingCardIdentity(true);
+  };
+
+  const handleSaveCardIdentity = async () => {
+    if (!canEditCardIdentity) return;
+
+    const nextInvoice = editedInvoice.trim();
+    const nextFirstName = editedFirstName.trim();
+    const nextLastName = editedLastName.trim();
+
+    if (!nextInvoice) {
+      alert("Invoice is required.");
+      return;
+    }
+
+    const invoiceUnchanged = (card.invoice || "") === nextInvoice;
+    const firstNameUnchanged = (card.first_name || "") === nextFirstName;
+    const lastNameUnchanged = (card.last_name || "") === nextLastName;
+
+    if (invoiceUnchanged && firstNameUnchanged && lastNameUnchanged) {
+      setIsEditingCardIdentity(false);
+      return;
+    }
+
+    setSavingCardIdentity(true);
+    try {
+      await api.put(`/board-lists/${card.board_list_id}/cards/${card.id}`, {
+        invoice: nextInvoice,
+        first_name: nextFirstName || null,
+        last_name: nextLastName || null,
+      });
+
+      setSelectedCard((prev) =>
+        prev && prev.id === card.id
+          ? {
+              ...prev,
+              invoice: nextInvoice,
+              first_name: nextFirstName || undefined,
+              last_name: nextLastName || undefined,
+            }
+          : prev
+      );
+
+      await fetchBoard();
+      await fetchActivities();
+      setIsEditingCardIdentity(false);
+    } catch (err: any) {
+      console.error("Failed to update card identity:", err);
+      alert(err?.response?.data?.message || "Could not update card details.");
+    } finally {
+      setSavingCardIdentity(false);
+    }
+  };
+
   const handleSaveDueDate = async () => {
     setSavingDueDate(true);
     try {
@@ -701,9 +777,67 @@ export default function CardDetailModal({
           <div className="flex-1 overflow-y-auto p-6 space-y-7 bg-white">
             <div className="flex items-start gap-3.5 pb-1">
               {/* <div className="mt-1.5 h-5 w-5 rounded-full border-2 border-gray-500 shrink-0" /> */}
-              <h2 className="text-2xl font-extrabold text-gray-900 truncate leading-tight">
-                {card.invoice || `ID-${card.id}`} {card.first_name} {card.last_name} • {formatDateWithOrdinal(card.created_at)}
-              </h2>
+              {isEditingCardIdentity ? (
+                <div className="w-full rounded-xl border border-indigo-200 bg-indigo-50/40 p-3 space-y-3">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                    <input
+                      value={editedInvoice}
+                      onChange={(e) => setEditedInvoice(e.target.value)}
+                      placeholder="Invoice"
+                      className="h-10 rounded-md border border-indigo-200 bg-white px-3 text-sm font-semibold text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                    />
+                    <input
+                      value={editedFirstName}
+                      onChange={(e) => setEditedFirstName(e.target.value)}
+                      placeholder="First name"
+                      className="h-10 rounded-md border border-indigo-200 bg-white px-3 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                    />
+                    <input
+                      value={editedLastName}
+                      onChange={(e) => setEditedLastName(e.target.value)}
+                      placeholder="Last name"
+                      className="h-10 rounded-md border border-indigo-200 bg-white px-3 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void handleSaveCardIdentity()}
+                      disabled={savingCardIdentity}
+                      className="px-4 py-1.5 rounded-md bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {savingCardIdentity ? "Saving..." : "Save"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsEditingCardIdentity(false);
+                        setEditedInvoice(card.invoice || "");
+                        setEditedFirstName(card.first_name || "");
+                        setEditedLastName(card.last_name || "");
+                      }}
+                      disabled={savingCardIdentity}
+                      className="px-4 py-1.5 rounded-md border border-gray-300 bg-white text-gray-700 text-sm font-semibold hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      Cancel
+                    </button>
+                    <span className="text-xs text-gray-500">
+                      Created on {formatDateWithOrdinal(card.created_at)}
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <h2
+                  className={`text-2xl font-extrabold text-gray-900 truncate leading-tight ${
+                    canEditCardIdentity ? "cursor-text hover:text-indigo-700" : ""
+                  }`}
+                  onClick={openCardIdentityEditor}
+                  title={canEditCardIdentity ? "Click to edit invoice and name" : undefined}
+                >
+                  {card.invoice || `ID-${card.id}`} {card.first_name} {card.last_name} •{" "}
+                  {formatDateWithOrdinal(card.created_at)}
+                </h2>
+              )}
             </div>
 
             <div className="flex flex-wrap gap-1.5">
@@ -1356,5 +1490,4 @@ export default function CardDetailModal({
     </div>
   );
 }
-
 

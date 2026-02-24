@@ -40,7 +40,7 @@ export default function Metrics() {
         setSubDepartmentCount(subDeptRes.data.data?.length || 0);
 
         // Current user
-        const me = await getMeCached();
+        const me = await getMeCached({ force: true });
         setCurrentUser(me as any);
       } catch (err) {
         console.error("Dashboard fetch error:", err);

@@ -33,6 +33,19 @@ class UserController extends Controller
         return $this->authUser()->role->name === 'superadmin';
     }
 
+    protected function canCreateUsers(): bool
+    {
+        if ($this->isSuperAdmin()) {
+            return true;
+        }
+
+        if ($this->isAdmin()) {
+            return (int) ($this->authUser()->can_create_users ?? 0) === 1;
+        }
+
+        return false;
+    }
+
     protected function canManage(User $user): bool
     {
         if ($this->isSuperAdmin()) {
@@ -133,6 +146,10 @@ class UserController extends Controller
     // --- Create User ---
     public function store(Request $request): JsonResponse
     {
+        if (!$this->canCreateUsers()) {
+            return response()->json(['message' => 'Add user permission is inactive'], 403);
+        }
+
         if (!$this->isSuperAdmin() && $request->has('allowed_ips')) {
             return response()->json(['message' => 'Only superadmin can assign IP allowlist'], 403);
         }

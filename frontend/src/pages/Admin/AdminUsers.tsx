@@ -64,7 +64,7 @@ export default function AdminUsers() {
 
   // Fetch logged-in user
   useEffect(() => {
-    getMeCached()
+    getMeCached({ force: true })
       .then((me) => setCurrentUser(me as any))
       .catch(() => setCurrentUser(null));
   }, []);

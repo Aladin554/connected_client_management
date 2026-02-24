@@ -32,7 +32,7 @@ export default function AdminUserForm() {
     first_name: "",
     last_name: "",
     email: "",
-    roleId: isEdit ? "" : "3",
+    roleId: "",
     password: "",
     max_cards: "10",
     allowed_ips: [] as string[],
@@ -51,10 +51,13 @@ export default function AdminUserForm() {
 
   const [submitting, setSubmitting] = useState(false);
   const [roles, setRoles] = useState<Role[]>([]);
+  const canCreateNewUsers =
+    currentUser?.role_id === 1 ||
+    (currentUser?.role_id === 2 && Number(currentUser?.can_create_users) === 1);
 
   // ---------- FETCH CURRENT USER ----------
   useEffect(() => {
-    getMeCached()
+    getMeCached({ force: true })
       .then((me) => {
         setCurrentUser(me as any);
       })
@@ -178,6 +181,14 @@ export default function AdminUserForm() {
   // ---------- SUBMIT FORM ----------
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!isEdit && !canCreateNewUsers) {
+      navigate("/dashboard/admin-users", {
+        state: { message: "Add user permission is inactive.", type: "error" },
+      });
+      return;
+    }
+
     if (!validateForm()) return;
 
     setSubmitting(true);
@@ -307,7 +318,13 @@ export default function AdminUserForm() {
         {/* Buttons */}
         <div className="flex justify-end gap-3 mt-8">
           <button type="button" onClick={() => navigate("/dashboard/admin-users")} className="px-5 py-2 rounded-lg border dark:border-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800">Cancel</button>
-          <button type="submit" disabled={submitting} className="px-6 py-3 rounded-lg bg-blue-600 text-white hover:bg-blue-700 text-lg disabled:opacity-50">{submitting ? "Saving..." : "Save User"}</button>
+          <button
+            type="submit"
+            disabled={submitting || (!isEdit && !canCreateNewUsers)}
+            className="px-6 py-3 rounded-lg bg-blue-600 text-white hover:bg-blue-700 text-lg disabled:opacity-50"
+          >
+            {submitting ? "Saving..." : "Save User"}
+          </button>
         </div>
       </form>
     </div>
