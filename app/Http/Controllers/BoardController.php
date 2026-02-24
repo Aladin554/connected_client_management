@@ -45,7 +45,7 @@ class BoardController extends Controller
                         $cardQuery->with([
                             'members' => function ($memberQuery) {
                                 $memberQuery
-                                    ->select('users.id', 'users.first_name', 'users.last_name')
+                                    ->select('users.id', 'users.first_name', 'users.last_name', 'users.role_id')
                                     ->orderBy('users.first_name')
                                     ->orderBy('users.last_name');
                             },

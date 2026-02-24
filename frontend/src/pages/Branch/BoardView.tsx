@@ -50,6 +50,31 @@ import DraggableCard from "./BoardView/DraggableCard";
 import DroppableList from "./BoardView/DroppableList";
 import type { Board, BoardActivity, Card, CardLabelBadge, LabelOption, List, Profile } from "./BoardView/types";
 import { formatDateWithOrdinal, formatFileSize, formatTimestamp, parseDateOnly } from "./BoardView/utils";
+
+const ROLE_NAME_BY_ID: Record<number, string> = {
+  1: "superadmin",
+  2: "admin",
+  3: "subadmin",
+  4: "counsellor",
+};
+
+const getRoleNameLabel = (roleId: number | null | undefined): string =>
+  roleId != null ? ROLE_NAME_BY_ID[roleId] || `role ${roleId}` : "unknown";
+
+type MemberDirectoryList = {
+  id?: number | string | null;
+};
+
+type MemberDirectoryApiUser = {
+  id?: number | string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  role_id?: number | string | null;
+  role?: { id?: number | string | null } | null;
+  board_lists?: MemberDirectoryList[] | null;
+  boardLists?: MemberDirectoryList[] | null;
+};
+
 /* ================= MAIN COMPONENT ================= */
 export default function BoardView() {
   const { boardId } = useParams<{ boardId: string }>();
@@ -94,6 +119,7 @@ export default function BoardView() {
   const [archivedSelectedCountryFilterIds, setArchivedSelectedCountryFilterIds] = useState<number[]>([]);
   const [archivedSelectedIntakeFilterIds, setArchivedSelectedIntakeFilterIds] = useState<number[]>([]);
   const [archivedSelectedServiceAreaFilterIds, setArchivedSelectedServiceAreaFilterIds] = useState<number[]>([]);
+  const [archivedSelectedMemberFilterId, setArchivedSelectedMemberFilterId] = useState<number | "">("");
   const [archivedDueDateFilter, setArchivedDueDateFilter] = useState<"all" | "today" | "this_week" | "overdue">("all");
   const [archivedOpenMultiSelectFilter, setArchivedOpenMultiSelectFilter] = useState<"country" | "intake" | "service" | null>(null);
   const [loadingArchivedCards, setLoadingArchivedCards] = useState(false);
@@ -101,6 +127,8 @@ export default function BoardView() {
   const [selectedCountryFilterIds, setSelectedCountryFilterIds] = useState<number[]>([]);
   const [selectedIntakeFilterIds, setSelectedIntakeFilterIds] = useState<number[]>([]);
   const [selectedServiceAreaFilterIds, setSelectedServiceAreaFilterIds] = useState<number[]>([]);
+  const [selectedMemberFilterId, setSelectedMemberFilterId] = useState<number | "">("");
+  const [memberDirectoryUsers, setMemberDirectoryUsers] = useState<MemberDirectoryApiUser[]>([]);
   const [dueDateFilter, setDueDateFilter] = useState<"all" | "today" | "this_week" | "overdue">("all");
   const [openMultiSelectFilter, setOpenMultiSelectFilter] = useState<"country" | "intake" | null>(null);
   const [countryFilterOptions, setCountryFilterOptions] = useState<LabelOption[]>([]);
@@ -126,12 +154,14 @@ export default function BoardView() {
     selectedCountryFilterIds.length > 0 ||
     selectedIntakeFilterIds.length > 0 ||
     selectedServiceAreaFilterIds.length > 0 ||
+    selectedMemberFilterId !== "" ||
     dueDateFilter !== "all";
   const shouldShowMatchCounts = showWildcardMatchCounts || hasActiveFilters;
   const hasArchivedFilters =
     archivedSelectedCountryFilterIds.length > 0 ||
     archivedSelectedIntakeFilterIds.length > 0 ||
     archivedSelectedServiceAreaFilterIds.length > 0 ||
+    archivedSelectedMemberFilterId !== "" ||
     archivedDueDateFilter !== "all";
   const shouldShowArchivedMatchCounts = archivedSearchTerm.trim().length > 0 || hasArchivedFilters;
 
@@ -197,6 +227,7 @@ export default function BoardView() {
     setArchivedSelectedCountryFilterIds([]);
     setArchivedSelectedIntakeFilterIds([]);
     setArchivedSelectedServiceAreaFilterIds([]);
+    setArchivedSelectedMemberFilterId("");
     setArchivedDueDateFilter("all");
     setArchivedOpenMultiSelectFilter(null);
     setShowArchivedModal(true);
@@ -208,6 +239,24 @@ export default function BoardView() {
     const isWildcardSearch = normalizedSearch === "*";
     const hasTextSearch = normalizedSearch.length > 0 && !isWildcardSearch;
     const searchTerms = hasTextSearch ? normalizedSearch.split(/\s+/).filter(Boolean) : [];
+    const archivedSelectedMemberUser =
+      archivedSelectedMemberFilterId !== ""
+        ? memberDirectoryUsers.find(
+            (user) => Number(user?.id) === Number(archivedSelectedMemberFilterId)
+          )
+        : null;
+    const archivedSelectedMemberAllowedListIds =
+      archivedSelectedMemberFilterId !== ""
+        ? new Set(
+            (
+              archivedSelectedMemberUser?.board_lists ||
+              archivedSelectedMemberUser?.boardLists ||
+              []
+            )
+              .map((list) => Number(list?.id))
+              .filter((id): id is number => Number.isFinite(id))
+          )
+        : null;
 
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -252,6 +301,12 @@ export default function BoardView() {
           : card.service_area_id != null
           ? [card.service_area_id]
           : [];
+      const memberIds = (card.members || [])
+        .map((member) => Number(member.id))
+        .filter((id): id is number => Number.isFinite(id));
+      const cardListId = Number(
+        card.board_list_id ?? card.boardList?.id ?? card.board_list?.id ?? 0
+      );
 
       if (
         archivedSelectedCountryFilterIds.length > 0 &&
@@ -270,6 +325,15 @@ export default function BoardView() {
         !serviceAreaIds.some((serviceAreaId) => archivedSelectedServiceAreaFilterIds.includes(serviceAreaId))
       ) {
         return false;
+      }
+      if (archivedSelectedMemberFilterId !== "") {
+        const hasDirectCardAccess = memberIds.includes(archivedSelectedMemberFilterId);
+        const hasListAccess =
+          Number.isFinite(cardListId) &&
+          (archivedSelectedMemberAllowedListIds?.has(cardListId) ?? false);
+        if (!hasDirectCardAccess && !hasListAccess) {
+          return false;
+        }
       }
       if (!cardMatchesDueDateFilter(card)) {
         return false;
@@ -345,7 +409,9 @@ export default function BoardView() {
     archivedSelectedCountryFilterIds,
     archivedSelectedIntakeFilterIds,
     archivedSelectedServiceAreaFilterIds,
+    archivedSelectedMemberFilterId,
     archivedDueDateFilter,
+    memberDirectoryUsers,
     countryLabelMap,
     intakeLabelMap,
     serviceAreaMap,
@@ -455,6 +521,31 @@ export default function BoardView() {
 
     fetchLabelMaps();
   }, []);
+
+  useEffect(() => {
+    const fetchMemberDirectory = async () => {
+      try {
+        const res = await api.get("/users");
+        const usersPayload: unknown =
+          Array.isArray((res.data as { data?: unknown })?.data)
+            ? (res.data as { data: unknown[] }).data
+            : Array.isArray(res.data)
+            ? res.data
+            : [];
+
+        const users = (usersPayload as unknown[]).filter(
+          (item): item is MemberDirectoryApiUser => typeof item === "object" && item !== null
+        );
+
+        setMemberDirectoryUsers(users);
+      } catch (err) {
+        console.error("Failed to load users for member filter", err);
+        setMemberDirectoryUsers([]);
+      }
+    };
+
+    fetchMemberDirectory();
+  }, [boardId]);
 
   useEffect(() => {
     const focusFilterSearch = () => {
@@ -1219,6 +1310,169 @@ export default function BoardView() {
     matchedByTitle: boolean;
   };
 
+  type MemberFilterOption = {
+    id: number;
+    name: string;
+    roleId: number | null;
+    roleName: string;
+    listCount: number;
+    cardCount: number;
+    listTitles: string[];
+  };
+
+  type MemberDirectoryUser = {
+    id: number;
+    firstName: string;
+    lastName: string;
+    roleId: number | null;
+    boardListIds: number[];
+  };
+
+  const memberDirectoryById = useMemo(() => {
+    const byId = new Map<number, MemberDirectoryUser>();
+
+    memberDirectoryUsers.forEach((rawUser) => {
+      const id = Number(rawUser?.id);
+      if (!Number.isFinite(id)) return;
+
+      const roleIdRaw = rawUser?.role_id ?? rawUser?.role?.id;
+      const roleId = roleIdRaw != null ? Number(roleIdRaw) : null;
+      if (roleId == null || ![2, 3, 4].includes(roleId)) return;
+
+      const boardListsRaw = Array.isArray(rawUser?.board_lists)
+        ? rawUser.board_lists
+        : Array.isArray(rawUser?.boardLists)
+        ? rawUser.boardLists
+        : [];
+
+      const boardListIds = boardListsRaw
+        .map((list) => Number(list?.id))
+        .filter((listId: number) => Number.isFinite(listId));
+
+      byId.set(id, {
+        id,
+        firstName: `${rawUser?.first_name || ""}`.trim(),
+        lastName: `${rawUser?.last_name || ""}`.trim(),
+        roleId,
+        boardListIds,
+      });
+    });
+
+    return byId;
+  }, [memberDirectoryUsers]);
+
+  const memberFilterOptions = useMemo<MemberFilterOption[]>(() => {
+    if (!board) return [];
+
+    const boardListIdSet = new Set(board.lists.map((list) => list.id));
+    const boardListTitleById = new Map(board.lists.map((list) => [list.id, list.title]));
+
+    const byMember = new Map<
+      number,
+      {
+        id: number;
+        name: string;
+        roleId: number | null;
+        roleName: string;
+        cardIds: Set<number>;
+        listIds: Set<number>;
+        listTitles: Set<string>;
+      }
+    >();
+
+    const ensureMember = (
+      memberId: number,
+      fallback: {
+        name: string;
+        roleId: number | null;
+      }
+    ) => {
+      const existing = byMember.get(memberId);
+      if (existing) return existing;
+
+      const created = {
+        id: memberId,
+        name: fallback.name,
+        roleId: fallback.roleId,
+        roleName: getRoleNameLabel(fallback.roleId),
+        cardIds: new Set<number>(),
+        listIds: new Set<number>(),
+        listTitles: new Set<string>(),
+      };
+      byMember.set(memberId, created);
+      return created;
+    };
+
+    memberDirectoryById.forEach((member) => {
+      const memberName =
+        `${member.firstName || ""} ${member.lastName || ""}`.trim() || `User #${member.id}`;
+      const current = ensureMember(member.id, {
+        name: memberName,
+        roleId: member.roleId,
+      });
+
+      member.boardListIds.forEach((listId) => {
+        if (!boardListIdSet.has(listId)) return;
+        current.listIds.add(listId);
+        current.listTitles.add(boardListTitleById.get(listId) || `List #${listId}`);
+      });
+    });
+
+    board.lists.forEach((list) => {
+      list.cards.forEach((card) => {
+        (card.members || []).forEach((member) => {
+          const memberId = Number(member.id);
+          if (!Number.isFinite(memberId)) return;
+
+          const directoryUser = memberDirectoryById.get(memberId);
+          const roleId = directoryUser?.roleId ?? (member.role_id != null ? Number(member.role_id) : null);
+          if (roleId == null || ![2, 3, 4].includes(roleId)) return;
+
+          const memberName = directoryUser
+            ? `${directoryUser.firstName || ""} ${directoryUser.lastName || ""}`.trim() || `User #${memberId}`
+            : `${member.first_name || ""} ${member.last_name || ""}`.trim() || `User #${memberId}`;
+
+          const current = ensureMember(memberId, {
+            name: memberName,
+            roleId,
+          });
+
+          current.cardIds.add(card.id);
+          current.listIds.add(list.id);
+          current.listTitles.add(list.title);
+        });
+      });
+    });
+
+    return Array.from(byMember.values())
+      .map((entry) => ({
+        id: entry.id,
+        name: entry.name,
+        roleId: entry.roleId,
+        roleName: entry.roleName,
+        listCount: entry.listIds.size,
+        cardCount: entry.cardIds.size,
+        listTitles: Array.from(entry.listTitles).sort((a, b) => a.localeCompare(b)),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [board, memberDirectoryById]);
+
+  useEffect(() => {
+    if (selectedMemberFilterId === "") return;
+    const allowed = new Set(memberFilterOptions.map((member) => member.id));
+    if (!allowed.has(selectedMemberFilterId)) {
+      setSelectedMemberFilterId("");
+    }
+  }, [memberFilterOptions, selectedMemberFilterId]);
+
+  useEffect(() => {
+    if (archivedSelectedMemberFilterId === "") return;
+    const allowed = new Set(memberFilterOptions.map((member) => member.id));
+    if (!allowed.has(archivedSelectedMemberFilterId)) {
+      setArchivedSelectedMemberFilterId("");
+    }
+  }, [memberFilterOptions, archivedSelectedMemberFilterId]);
+
   const { laterIntakeLists, admissionLists, visaLists, dependantVisaLists, totalMatchedCards } = useMemo(() => {
     if (!board) {
       return {
@@ -1247,6 +1501,10 @@ export default function BoardView() {
     const hasPaymentTerm = searchTerms.some((term) =>
       ["paid", "done", "unpaid", "pending"].includes(term)
     );
+    const selectedMemberAllowedListIds =
+      selectedMemberFilterId !== ""
+        ? new Set(memberDirectoryById.get(selectedMemberFilterId)?.boardListIds || [])
+        : null;
 
     const cardMatchesDueDateFilter = (card: Card) => {
       if (dueDateFilter === "all") return true;
@@ -1283,6 +1541,9 @@ export default function BoardView() {
           : card.service_area_id != null
           ? [card.service_area_id]
           : [];
+      const memberIds = (card.members || [])
+        .map((member) => Number(member.id))
+        .filter((id): id is number => Number.isFinite(id));
 
       if (
         selectedCountryFilterIds.length > 0 &&
@@ -1301,6 +1562,13 @@ export default function BoardView() {
         !serviceAreaIds.some((serviceAreaId) => selectedServiceAreaFilterIds.includes(serviceAreaId))
       ) {
         return false;
+      }
+      if (selectedMemberFilterId !== "") {
+        const hasDirectCardAccess = memberIds.includes(selectedMemberFilterId);
+        const hasListAccess = selectedMemberAllowedListIds?.has(Number(card.board_list_id)) ?? false;
+        if (!hasDirectCardAccess && !hasListAccess) {
+          return false;
+        }
       }
       if (!cardMatchesDueDateFilter(card)) {
         return false;
@@ -1322,6 +1590,14 @@ export default function BoardView() {
         .map((id) => serviceAreaMap[id] || "")
         .filter(Boolean)
         .join(" ");
+      const memberNames = (card.members || [])
+        .map((member) => `${member.first_name || ""} ${member.last_name || ""}`.trim())
+        .filter(Boolean)
+        .join(" ");
+      const memberRoles = (card.members || [])
+        .map((member) => getRoleNameLabel(member.role_id))
+        .filter(Boolean)
+        .join(" ");
       const paymentTerms = card.payment_done
         ? "visa payment paid done"
         : "visa payment unpaid pending";
@@ -1338,6 +1614,8 @@ export default function BoardView() {
         countryLabelName,
         intakeLabelName,
         serviceAreaName,
+        memberNames,
+        memberRoles,
         paymentTerms,
         dependantPaymentTerms,
       ]
@@ -1396,7 +1674,12 @@ export default function BoardView() {
         })
         .filter((list) => {
           if (!hasTextSearch && !hasActiveFilters) return true;
-          if (hasActiveFilters) return list.cards.length > 0;
+          if (hasActiveFilters) {
+            const hasSelectedMemberListAccess =
+              selectedMemberFilterId !== "" &&
+              (selectedMemberAllowedListIds?.has(Number(list.id)) ?? false);
+            return list.cards.length > 0 || hasSelectedMemberListAccess;
+          }
           return list.matchedByTitle || list.cards.length > 0;
         });
     };
@@ -1441,6 +1724,8 @@ export default function BoardView() {
     selectedCountryFilterIds,
     selectedIntakeFilterIds,
     selectedServiceAreaFilterIds,
+    selectedMemberFilterId,
+    memberDirectoryById,
     countryLabelMap,
     intakeLabelMap,
     serviceAreaMap,
@@ -1803,6 +2088,7 @@ export default function BoardView() {
                       setSelectedCountryFilterIds([]);
                       setSelectedIntakeFilterIds([]);
                       setSelectedServiceAreaFilterIds([]);
+                      setSelectedMemberFilterId("");
                       setDueDateFilter("all");
                       setOpenMultiSelectFilter(null);
                     }}
@@ -1823,6 +2109,22 @@ export default function BoardView() {
                     placeholder="Type to filter cards, use * for all cards"
                     className="h-9 w-full rounded-md border border-gray-300 px-2.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-300"
                   />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Member</label>
+                  <select
+                    value={selectedMemberFilterId}
+                    onChange={(e) => setSelectedMemberFilterId(e.target.value ? Number(e.target.value) : "")}
+                    className="h-9 w-full rounded-md border border-gray-300 px-2.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                  >
+                    <option value="">Select</option>
+                    {memberFilterOptions.map((member) => (
+                      <option key={`member-filter-option-${member.id}`} value={member.id}>
+                        {member.name} ({member.roleName})
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 <div>
@@ -2314,6 +2616,7 @@ export default function BoardView() {
                             setArchivedSelectedCountryFilterIds([]);
                             setArchivedSelectedIntakeFilterIds([]);
                             setArchivedSelectedServiceAreaFilterIds([]);
+                            setArchivedSelectedMemberFilterId("");
                             setArchivedDueDateFilter("all");
                             setArchivedOpenMultiSelectFilter(null);
                           }}
@@ -2333,6 +2636,26 @@ export default function BoardView() {
                           placeholder="Type to filter cards, use * for all cards"
                           className="h-9 w-full rounded-md border border-gray-300 px-2.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-300"
                         />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Member</label>
+                        <select
+                          value={archivedSelectedMemberFilterId}
+                          onChange={(e) =>
+                            setArchivedSelectedMemberFilterId(
+                              e.target.value ? Number(e.target.value) : ""
+                            )
+                          }
+                          className="h-9 w-full rounded-md border border-gray-300 px-2.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                        >
+                          <option value="">Select</option>
+                          {memberFilterOptions.map((member) => (
+                            <option key={`archived-member-filter-option-${member.id}`} value={member.id}>
+                              {member.name} ({member.roleName})
+                            </option>
+                          ))}
+                        </select>
                       </div>
 
                       <div className="grid gap-3 lg:grid-cols-4">
