@@ -1446,19 +1446,30 @@ export default function BoardView() {
     serviceAreaMap,
   ]);
 
-  const addCardAllowedListId = useMemo(() => {
-    if (!board || board.lists.length === 0) return null;
+  const addCardAllowedListIds = useMemo(() => {
+    if (!board || board.lists.length === 0) return new Set<number>();
+
     const firstLaterIntakeList = [...board.lists]
       .filter((list) => list.category === 3)
       .sort((a, b) => a.position - b.position)[0];
-    if (firstLaterIntakeList) {
-      return firstLaterIntakeList.id;
-    }
-
     const firstAdmissionList = [...board.lists]
       .filter((list) => (list.category ?? 0) === 0)
       .sort((a, b) => a.position - b.position)[0];
-    return firstAdmissionList?.id ?? null;
+    const firstVisaList = [...board.lists]
+      .filter((list) => list.category === 1)
+      .sort((a, b) => a.position - b.position)[0];
+    const firstDependantVisaList = [...board.lists]
+      .filter((list) => list.category === 2)
+      .sort((a, b) => a.position - b.position)[0];
+
+    return new Set(
+      [
+        firstLaterIntakeList?.id,
+        firstAdmissionList?.id,
+        firstVisaList?.id,
+        firstDependantVisaList?.id,
+      ].filter((id): id is number => id != null)
+    );
   }, [board]);
 
   if (loading) return <Loader message="Loading board..." />;
@@ -2061,7 +2072,7 @@ export default function BoardView() {
           >
             <div className="min-h-full p-6 flex gap-6 min-w-max">
               <div className="min-h-0 flex gap-6">
-                <div className="min-w-[420px] flex flex-col gap-3">
+                <div className="min-w-[320px] flex flex-col gap-3">
                   <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-sky-100 text-sky-800 text-xs font-semibold uppercase tracking-wide">
                     Later Intake
                   </div>
@@ -2070,10 +2081,10 @@ export default function BoardView() {
                       items={laterIntakeLists.map((list) => `list-${list.id}`)}
                       strategy={horizontalListSortingStrategy}
                     >
-                      <div className="flex gap-6 min-w-max items-start pb-2 pr-2">
+                      <div className="flex gap-6 min-w-max items-start pb-2 pr-0">
                         {laterIntakeLists.length > 0 ? (
                           laterIntakeLists.map((list) =>
-                            renderListColumn(list, list.id === addCardAllowedListId)
+                            renderListColumn(list, addCardAllowedListIds.has(list.id))
                           )
                         ) : (
                           <div className="w-80 h-28 rounded-xl border border-dashed border-sky-300 bg-sky-50/50 text-sky-800 text-sm flex items-center justify-center">
@@ -2087,7 +2098,7 @@ export default function BoardView() {
 
                 <div className="self-stretch border-l-2 border-dotted border-indigo-300/70" />
 
-                <div className="min-w-[420px] flex flex-col gap-3">
+                <div className="min-w-[320px] flex flex-col gap-3">
                   <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-semibold uppercase tracking-wide">
                     Admission
                   </div>
@@ -2096,10 +2107,10 @@ export default function BoardView() {
                       items={admissionLists.map((list) => `list-${list.id}`)}
                       strategy={horizontalListSortingStrategy}
                     >
-                      <div className="flex gap-6 min-w-max items-start pb-2 pr-2">
+                      <div className="flex gap-6 min-w-max items-start pb-2 pr-0">
                         {admissionLists.length > 0 ? (
                           admissionLists.map((list) =>
-                            renderListColumn(list, list.id === addCardAllowedListId)
+                            renderListColumn(list, addCardAllowedListIds.has(list.id))
                           )
                         ) : (
                           <div className="w-80 h-28 rounded-xl border border-dashed border-emerald-300 bg-emerald-50/50 text-emerald-800 text-sm flex items-center justify-center">
@@ -2113,7 +2124,7 @@ export default function BoardView() {
 
                 <div className="self-stretch border-l-2 border-dotted border-indigo-300/70" />
 
-                <div className="min-w-[420px] flex flex-col gap-3">
+                <div className="min-w-[320px] flex flex-col gap-3">
                   <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-100 text-amber-800 text-xs font-semibold uppercase tracking-wide">
                     Visa
                   </div>
@@ -2122,10 +2133,10 @@ export default function BoardView() {
                       items={visaLists.map((list) => `list-${list.id}`)}
                       strategy={horizontalListSortingStrategy}
                     >
-                      <div className="flex gap-6 min-w-max items-start pb-2 pr-2">
+                      <div className="flex gap-6 min-w-max items-start pb-2 pr-0">
                         {visaLists.length > 0 ? (
                           visaLists.map((list) =>
-                            renderListColumn(list, list.id === addCardAllowedListId)
+                            renderListColumn(list, addCardAllowedListIds.has(list.id))
                           )
                         ) : (
                           <div className="w-80 h-28 rounded-xl border border-dashed border-amber-300 bg-amber-50/50 text-amber-800 text-sm flex items-center justify-center">
@@ -2139,7 +2150,7 @@ export default function BoardView() {
 
                 <div className="self-stretch border-l-2 border-dotted border-indigo-300/70" />
 
-                <div className="min-w-[420px] flex flex-col gap-3">
+                <div className="min-w-[320px] flex flex-col gap-3">
                   <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-rose-100 text-rose-800 text-xs font-semibold uppercase tracking-wide">
                     Dependant Visa
                   </div>
@@ -2148,10 +2159,10 @@ export default function BoardView() {
                       items={dependantVisaLists.map((list) => `list-${list.id}`)}
                       strategy={horizontalListSortingStrategy}
                     >
-                      <div className="flex gap-6 min-w-max items-start pb-2 pr-2">
+                      <div className="flex gap-6 min-w-max items-start pb-2 pr-0">
                         {dependantVisaLists.length > 0 ? (
                           dependantVisaLists.map((list) =>
-                            renderListColumn(list, list.id === addCardAllowedListId)
+                            renderListColumn(list, addCardAllowedListIds.has(list.id))
                           )
                         ) : (
                           <div className="w-80 h-28 rounded-xl border border-dashed border-rose-300 bg-rose-50/50 text-rose-800 text-sm flex items-center justify-center">
