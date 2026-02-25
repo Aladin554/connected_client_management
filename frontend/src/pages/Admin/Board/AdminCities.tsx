@@ -43,6 +43,12 @@ interface User {
 
 const CATEGORY_META: { id: number; label: string; chipClass: string }[] = [
   {
+    id: 3,
+    label: "Later Intake",
+    chipClass:
+      "bg-sky-100 text-sky-800 border-sky-300 dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-700",
+  },
+  {
     id: 0,
     label: "Admission",
     chipClass:
@@ -63,7 +69,7 @@ const CATEGORY_META: { id: number; label: string; chipClass: string }[] = [
 ];
 
 const getCategoryId = (list: BoardList): number =>
-  [0, 1, 2].includes(Number(list.category)) ? Number(list.category) : 0;
+  [0, 1, 2, 3].includes(Number(list.category)) ? Number(list.category) : 0;
 
 export default function AdminCities() {
   const [cities, setCities] = useState<City[]>([]);
@@ -200,14 +206,6 @@ export default function AdminCities() {
 
         setSelectedListIds((p) => p.filter((id) => !listIds.includes(id)));
         return prev.filter((id) => id !== boardId);
-      }
-
-      const board = cities
-        .flatMap((c) => c.boards)
-        .find((b) => b.id === boardId);
-      const listIds = board?.lists?.map((l) => l.id) || [];
-      if (listIds.length > 0) {
-        setSelectedListIds((p) => [...new Set([...p, ...listIds])]);
       }
 
       const parentCity = cities.find((c) => c.boards.some((b) => b.id === boardId));
@@ -713,4 +711,3 @@ export default function AdminCities() {
     </div>
   );
 }
-
