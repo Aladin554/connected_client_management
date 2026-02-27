@@ -7,22 +7,60 @@ use App\Models\BoardCard;
 use App\Models\BoardList;
 use App\Models\Activity;
 use App\Models\City;
+use App\Models\CountryLabel;
+use App\Models\IntakeLabel;
+use App\Models\ServiceArea;
 use App\Models\User;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 use Carbon\Carbon;
 
 class BoardCardController extends Controller
 {
+    private function isCommissionBoardName(?string $name): bool
+    {
+        $normalized = strtolower(trim((string) $name));
+        return str_contains($normalized, 'commission') || str_contains($normalized, 'comission');
+    }
+
     private function canBypassListPermissions($user): bool
     {
-        return (int) $user->role_id === 1;
+        return in_array((int) $user->role_id, [1, 2], true);
     }
 
     private function canBypassCardMemberVisibility($user): bool
     {
         return in_array((int) $user->role_id, [1, 2], true);
+    }
+
+    private function requiresExplicitCardMembership($user): bool
+    {
+        return in_array((int) $user->role_id, [3, 4], true);
+    }
+
+    private function applyCardVisibilityScope($cardQuery, $user): void
+    {
+        if ($this->canBypassCardMemberVisibility($user)) {
+            return;
+        }
+
+        if ($this->requiresExplicitCardMembership($user)) {
+            $cardQuery->whereHas('members', function ($memberQuery) use ($user) {
+                $memberQuery->where('users.id', $user->id);
+            });
+            return;
+        }
+
+        $cardQuery->where(function ($visibleQuery) use ($user) {
+            $visibleQuery
+                ->whereDoesntHave('members')
+                ->orWhereHas('members', function ($memberQuery) use ($user) {
+                    $memberQuery->where('users.id', $user->id);
+                });
+        });
     }
 
     private function canManageCardMembers($user): bool
@@ -36,6 +74,15 @@ class BoardCardController extends Controller
 
         if (!$user) {
             abort(401, 'Unauthenticated');
+        }
+
+        $board = Board::query()->select('id', 'name')->find($boardId);
+        if (!$board) {
+            abort(404);
+        }
+
+        if ($this->isCommissionBoardName($board->name ?? null) && (int) $user->role_id !== 1) {
+            abort(403, 'Forbidden');
         }
 
         // Superadmin can access everything.
@@ -79,14 +126,21 @@ class BoardCardController extends Controller
             return;
         }
 
+        $isCardMember = $boardCard->members()
+            ->where('users.id', $user->id)
+            ->exists();
+
+        if ($this->requiresExplicitCardMembership($user)) {
+            if (!$isCardMember) {
+                abort(403, 'Forbidden');
+            }
+            return;
+        }
+
         $hasMemberRestriction = $boardCard->members()->exists();
         if (!$hasMemberRestriction) {
             return;
         }
-
-        $isCardMember = $boardCard->members()
-            ->where('users.id', $user->id)
-            ->exists();
 
         if (!$isCardMember) {
             abort(403, 'Forbidden');
@@ -119,6 +173,143 @@ class BoardCardController extends Controller
         ) ?: 'Guest';
     }
 
+    private function normalizeIdArray($value): array
+    {
+        return collect(is_array($value) ? $value : [])
+            ->filter(fn ($id) => !is_null($id) && $id !== '')
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->sort()
+            ->values()
+            ->all();
+    }
+
+    private function extractCardLabelIds($singleId, $multipleIds): array
+    {
+        return collect($this->normalizeIdArray($multipleIds))
+            ->merge(!is_null($singleId) ? [(int) $singleId] : [])
+            ->unique()
+            ->sort()
+            ->values()
+            ->all();
+    }
+
+    private function resolveModelNamesByIds(string $modelClass, array $ids, string $fallbackPrefix): array
+    {
+        $normalizedIds = $this->normalizeIdArray($ids);
+        if (empty($normalizedIds)) {
+            return [];
+        }
+
+        $namesById = $modelClass::query()
+            ->whereIn('id', $normalizedIds)
+            ->pluck('name', 'id');
+
+        return collect($normalizedIds)
+            ->map(fn ($id) => (string) ($namesById[$id] ?? ($fallbackPrefix . ' #' . $id)))
+            ->all();
+    }
+
+    private function formatActivityList(array $values, string $empty = 'None'): string
+    {
+        $clean = collect($values)
+            ->map(fn ($value) => trim((string) $value))
+            ->filter(fn ($value) => $value !== '')
+            ->values()
+            ->all();
+
+        return empty($clean) ? $empty : implode(', ', $clean);
+    }
+
+    private function formatActivityValue(?string $value, ?int $limit = 180): string
+    {
+        $text = trim((string) $value);
+        if ($text === '') {
+            return '[empty]';
+        }
+
+        $singleLine = preg_replace('/\s+/', ' ', $text);
+        $singleLine = is_string($singleLine) ? trim($singleLine) : $text;
+
+        if (!is_null($limit) && $limit > 0) {
+            return '"' . Str::limit($singleLine, $limit) . '"';
+        }
+
+        return '"' . $singleLine . '"';
+    }
+
+    private function formatActivityChange(?string $oldValue, ?string $newValue, ?int $limit = 180): string
+    {
+        return $this->formatActivityValue($oldValue, $limit) . ' -> ' . $this->formatActivityValue($newValue, $limit);
+    }
+
+    private function formatUserDisplayName(User $user): string
+    {
+        $fullName = trim(($user->first_name ?? '') . ' ' . ($user->last_name ?? ''));
+        if ($fullName !== '') {
+            return $fullName;
+        }
+
+        if (!empty($user->email)) {
+            return (string) $user->email;
+        }
+
+        return 'User #' . $user->id;
+    }
+
+    private function resolveUserNamesByIds(array $ids): array
+    {
+        $normalizedIds = $this->normalizeIdArray($ids);
+        if (empty($normalizedIds)) {
+            return [];
+        }
+
+        $usersById = User::query()
+            ->whereIn('id', $normalizedIds)
+            ->get(['id', 'first_name', 'last_name', 'email'])
+            ->keyBy('id');
+
+        return collect($normalizedIds)
+            ->map(function ($id) use ($usersById) {
+                $user = $usersById->get($id);
+                if (!$user) {
+                    return 'User #' . $id;
+                }
+
+                return $this->formatUserDisplayName($user);
+            })
+            ->all();
+    }
+
+    private function normalizeInvoiceValue(?string $invoice): string
+    {
+        $normalized = preg_replace('/\s+/', ' ', trim((string) $invoice));
+        return is_string($normalized) ? $normalized : trim((string) $invoice);
+    }
+
+    private function isDuplicateInvoiceException(QueryException $exception): bool
+    {
+        $sqlState = (string) ($exception->errorInfo[0] ?? $exception->getCode());
+        if ($sqlState !== '23000' && $sqlState !== '23505') {
+            return false;
+        }
+
+        $message = strtolower($exception->getMessage());
+        return str_contains($message, 'board_cards_invoice_unique')
+            || str_contains($message, 'duplicate entry')
+            || str_contains($message, 'unique constraint');
+    }
+
+    private function duplicateInvoiceResponse()
+    {
+        return response()->json([
+            'message' => 'Invoice already exists. Please use a unique invoice.',
+            'errors' => [
+                'invoice' => ['This invoice has already been taken.'],
+            ],
+        ], 422);
+    }
+
     // GET all cards in a list
     public function index(BoardList $boardList)
     {
@@ -129,15 +320,7 @@ class BoardCardController extends Controller
             ->orderBy('position');
 
         $user = Auth::user();
-        if (!$this->canBypassCardMemberVisibility($user)) {
-            $query->where(function ($visibleQuery) use ($user) {
-                $visibleQuery
-                    ->whereDoesntHave('members')
-                    ->orWhereHas('members', function ($memberQuery) use ($user) {
-                        $memberQuery->where('users.id', $user->id);
-                    });
-            });
-        }
+        $this->applyCardVisibilityScope($query, $user);
 
         return response()->json($query->get());
     }
@@ -166,15 +349,7 @@ class BoardCardController extends Controller
             });
         }
 
-        if (!$this->canBypassCardMemberVisibility($user)) {
-            $query->where(function ($visibleQuery) use ($user) {
-                $visibleQuery
-                    ->whereDoesntHave('members')
-                    ->orWhereHas('members', function ($memberQuery) use ($user) {
-                        $memberQuery->where('users.id', $user->id);
-                    });
-            });
-        }
+        $this->applyCardVisibilityScope($query, $user);
 
         return response()->json($query->get());
     }
@@ -214,8 +389,12 @@ class BoardCardController extends Controller
     {
         $this->assertCanAccessBoardList($boardList);
 
+        $request->merge([
+            'invoice' => $this->normalizeInvoiceValue($request->input('invoice')),
+        ]);
+
         $validated = $request->validate([
-            'invoice'      => 'required|string|max:255|unique:board_cards,invoice',
+            'invoice'      => ['required', 'string', 'max:255', Rule::unique('board_cards', 'invoice')],
             'first_name'   => 'nullable|string|max:255',
             'last_name'    => 'nullable|string|max:255',
             'description'  => 'nullable|string',
@@ -225,24 +404,35 @@ class BoardCardController extends Controller
 
         // Auto position
         $maxPosition = $boardList->cards()->max('position') ?? 0;
+        try {
+            $card = $boardList->cards()->create([
+                'invoice'     => $validated['invoice'],
+                'first_name'  => $validated['first_name'] ?? null,
+                'last_name'   => $validated['last_name'] ?? null,
+                'description' => $validated['description'] ?? null,
+                'position'    => $validated['position'] ?? $maxPosition + 10000,
+                'checked'     => $validated['checked'] ?? false,
+            ]);
+        } catch (QueryException $exception) {
+            if ($this->isDuplicateInvoiceException($exception)) {
+                return $this->duplicateInvoiceResponse();
+            }
+            throw $exception;
+        }
 
-        $card = $boardList->cards()->create([
-            'invoice'     => $validated['invoice'],
-            'first_name'  => $validated['first_name'] ?? null,
-            'last_name'   => $validated['last_name'] ?? null,
-            'description' => $validated['description'] ?? null,
-            'position'    => $validated['position'] ?? $maxPosition + 10000,
-            'checked'     => $validated['checked'] ?? false,
-        ]);
-
-        Activity::create([
-            'user_id'   => Auth::id(),
-            'user_name' => $this->userFullName(),
-            'card_id'   => $card->id,
-            'list_id'   => $boardList->id,
-            'action'    => 'created card',
-            'details'   => trim(($card->first_name ?? '') . ' ' . ($card->last_name ?? '')),
-        ]);
+        try {
+            Activity::create([
+                'user_id'   => Auth::id(),
+                'user_name' => $this->userFullName(),
+                'card_id'   => $card->id,
+                'list_id'   => $boardList->id,
+                'action'    => 'created card',
+                'details'   => trim(($card->first_name ?? '') . ' ' . ($card->last_name ?? '')),
+            ]);
+        } catch (\Throwable $exception) {
+            // Card was created successfully; keep API response successful even if activity log fails.
+            report($exception);
+        }
 
         return response()->json($card, 201);
     }
@@ -275,8 +465,14 @@ class BoardCardController extends Controller
         $this->assertCanAccessBoardCard($boardCard);
         $boardCard->loadMissing('boardList');
 
+        if ($request->has('invoice')) {
+            $request->merge([
+                'invoice' => $this->normalizeInvoiceValue($request->input('invoice')),
+            ]);
+        }
+
         $validated = $request->validate([
-            'invoice'       => 'sometimes|string|max:255',
+            'invoice'       => ['sometimes', 'filled', 'string', 'max:255', Rule::unique('board_cards', 'invoice')->ignore($boardCard->id)],
             'first_name'    => 'sometimes|nullable|string|max:255',
             'last_name'     => 'sometimes|nullable|string|max:255',
             'description'   => 'sometimes|nullable|string',
@@ -318,16 +514,63 @@ class BoardCardController extends Controller
             }
         }
 
-        $boardCard->update($validated);
+        $beforeInvoice = (string) ($boardCard->invoice ?? '');
+        $beforeFirstName = (string) ($boardCard->first_name ?? '');
+        $beforeLastName = (string) ($boardCard->last_name ?? '');
+        $beforeDescription = (string) ($boardCard->description ?? '');
 
-        if ($request->has('description')) {
-            Activity::create([
-                'user_id'   => Auth::id(),
-                'user_name' => $this->userFullName(),
-                'card_id'   => $boardCard->id,
-                'action'    => 'updated description',
-                'details'   => 'Description was modified',
-            ]);
+        try {
+            $boardCard->update($validated);
+        } catch (QueryException $exception) {
+            if ($this->isDuplicateInvoiceException($exception)) {
+                return $this->duplicateInvoiceResponse();
+            }
+            throw $exception;
+        }
+
+        $changeLines = [];
+
+        if (array_key_exists('invoice', $validated)) {
+            $afterInvoice = (string) ($boardCard->invoice ?? '');
+            if (trim($beforeInvoice) !== trim($afterInvoice)) {
+                $changeLines[] = 'Invoice: ' . $this->formatActivityChange($beforeInvoice, $afterInvoice, 120);
+            }
+        }
+
+        if (array_key_exists('first_name', $validated)) {
+            $afterFirstName = (string) ($boardCard->first_name ?? '');
+            if (trim($beforeFirstName) !== trim($afterFirstName)) {
+                $changeLines[] = 'First name: ' . $this->formatActivityChange($beforeFirstName, $afterFirstName, 120);
+            }
+        }
+
+        if (array_key_exists('last_name', $validated)) {
+            $afterLastName = (string) ($boardCard->last_name ?? '');
+            if (trim($beforeLastName) !== trim($afterLastName)) {
+                $changeLines[] = 'Last name: ' . $this->formatActivityChange($beforeLastName, $afterLastName, 120);
+            }
+        }
+
+        if (array_key_exists('description', $validated)) {
+            $afterDescription = (string) ($boardCard->description ?? '');
+            if (trim($beforeDescription) !== trim($afterDescription)) {
+                $changeLines[] = 'Description: ' . $this->formatActivityChange($beforeDescription, $afterDescription, null);
+            }
+        }
+
+        if (!empty($changeLines)) {
+            try {
+                Activity::create([
+                    'user_id'   => Auth::id(),
+                    'user_name' => $this->userFullName(),
+                    'card_id'   => $boardCard->id,
+                    'action'    => 'updated card details',
+                    'details'   => implode("\n", $changeLines),
+                ]);
+            } catch (\Throwable $exception) {
+                // Keep the main card update successful even if activity logging fails.
+                report($exception);
+            }
         }
 
         return response()->json($boardCard);
@@ -406,6 +649,184 @@ class BoardCardController extends Controller
         ]);
     }
 
+    // GET commission board target lists for a card
+    public function commissionMoveTargets(BoardCard $boardCard)
+    {
+        $this->assertCanAccessBoardCard($boardCard);
+
+        $user = Auth::user();
+        if (!$user || (int) $user->role_id !== 1) {
+            return response()->json([
+                'message' => 'Only superadmin can move cards to Commission Board',
+            ], 403);
+        }
+
+        $boardCard->loadMissing('boardList.board');
+        $sourceList = $boardCard->boardList;
+        $sourceBoard = $sourceList?->board;
+        if (!$sourceList || !$sourceBoard) {
+            return response()->json(['message' => 'Card source list not found'], 404);
+        }
+
+        $commissionBoardBaseQuery = Board::query()
+            ->where(function ($query) {
+                $query
+                    ->whereRaw('LOWER(name) = ?', ['commission board'])
+                    ->orWhereRaw('LOWER(name) LIKE ?', ['%commission%']);
+            })
+            ->orderByRaw("CASE WHEN LOWER(name) = 'commission board' THEN 0 ELSE 1 END")
+            ->orderBy('id');
+
+        $commissionBoard = null;
+        if (!empty($sourceBoard->city_id)) {
+            $commissionBoard = (clone $commissionBoardBaseQuery)
+                ->where('city_id', $sourceBoard->city_id)
+                ->first();
+        }
+        if (!$commissionBoard) {
+            $commissionBoard = (clone $commissionBoardBaseQuery)->first();
+        }
+
+        if (!$commissionBoard) {
+            return response()->json([
+                'message' => 'Commission Board not found',
+            ], 422);
+        }
+
+        $this->assertCanAccessBoardId((int) $commissionBoard->id);
+
+        $lists = $commissionBoard->lists()
+            ->where('category', BoardList::CATEGORY_COMMISSION_BOARD)
+            ->orderBy('position')
+            ->get(['id', 'title', 'position']);
+
+        return response()->json([
+            'board' => [
+                'id' => $commissionBoard->id,
+                'name' => $commissionBoard->name,
+            ],
+            'lists' => $lists,
+            'default_list_id' => $lists->first()?->id,
+        ]);
+    }
+
+    // MOVE card to Commission Board
+    public function moveToCommissionBoard(Request $request, BoardCard $boardCard)
+    {
+        $this->assertCanAccessBoardCard($boardCard);
+
+        $user = Auth::user();
+        if (!$user || (int) $user->role_id !== 1) {
+            return response()->json([
+                'message' => 'Only superadmin can move cards to Commission Board',
+            ], 403);
+        }
+
+        $boardCard->loadMissing('boardList.board');
+        $sourceList = $boardCard->boardList;
+        $sourceBoard = $sourceList?->board;
+        if (!$sourceList || !$sourceBoard) {
+            return response()->json(['message' => 'Card source list not found'], 404);
+        }
+
+        $validated = $request->validate([
+            'to_list_id' => 'nullable|integer|exists:board_lists,id',
+        ]);
+
+        $commissionBoardBaseQuery = Board::query()
+            ->where(function ($query) {
+                $query
+                    ->whereRaw('LOWER(name) = ?', ['commission board'])
+                    ->orWhereRaw('LOWER(name) LIKE ?', ['%commission%']);
+            })
+            ->orderByRaw("CASE WHEN LOWER(name) = 'commission board' THEN 0 ELSE 1 END")
+            ->orderBy('id');
+
+        $commissionBoard = null;
+        if (!empty($sourceBoard->city_id)) {
+            $commissionBoard = (clone $commissionBoardBaseQuery)
+                ->where('city_id', $sourceBoard->city_id)
+                ->first();
+        }
+        if (!$commissionBoard) {
+            $commissionBoard = (clone $commissionBoardBaseQuery)->first();
+        }
+
+        if (!$commissionBoard) {
+            return response()->json([
+                'message' => 'Commission Board not found',
+            ], 422);
+        }
+
+        $this->assertCanAccessBoardId((int) $commissionBoard->id);
+
+        $targetListQuery = $commissionBoard->lists()
+            ->where('category', BoardList::CATEGORY_COMMISSION_BOARD)
+            ->orderBy('position');
+        if (!empty($validated['to_list_id'])) {
+            $targetList = (clone $targetListQuery)
+                ->whereKey((int) $validated['to_list_id'])
+                ->first();
+
+            if (!$targetList) {
+                return response()->json([
+                    'message' => 'Selected list does not belong to Commission Board',
+                ], 422);
+            }
+        } else {
+            $targetList = $targetListQuery->first();
+        }
+
+        if (!$targetList) {
+            return response()->json([
+                'message' => 'No list found in Commission Board',
+            ], 422);
+        }
+
+        $this->assertCanAccessBoardList($targetList);
+
+        if ((int) $boardCard->board_list_id === (int) $targetList->id) {
+            return response()->json([
+                'message' => 'Card is already in the selected Commission Board list',
+                'card' => $boardCard->fresh(),
+            ]);
+        }
+
+        $nextPosition = ((int) ($targetList->cards()->max('position') ?? 0)) + 1;
+
+        $oldListTitle = $sourceList->title ?? 'Unknown List';
+        $newListTitle = $targetList->title ?? 'Unknown List';
+        $oldBoardTitle = $sourceBoard->name ?? 'Unknown Board';
+        $newBoardTitle = $commissionBoard->name ?? 'Commission Board';
+
+        $boardCard->update([
+            'board_list_id' => $targetList->id,
+            'position' => $nextPosition,
+        ]);
+
+        Activity::create([
+            'user_id'   => Auth::id(),
+            'user_name' => $this->userFullName(),
+            'card_id'   => $boardCard->id,
+            'list_id'   => $targetList->id,
+            'action'    => 'moved card to commission board',
+            'details'   => "from \"$oldBoardTitle / $oldListTitle\" to \"$newBoardTitle / $newListTitle\"",
+        ]);
+
+        return response()->json([
+            'message' => 'Card moved to Commission Board successfully',
+            'card' => $boardCard->fresh(),
+            'target_board' => [
+                'id' => $commissionBoard->id,
+                'name' => $commissionBoard->name,
+            ],
+            'target_list' => [
+                'id' => $targetList->id,
+                'title' => $targetList->title,
+            ],
+        ]);
+    }
+
     // DELETE card
     public function destroy(BoardList $boardList, BoardCard $boardCard)
     {
@@ -424,6 +845,10 @@ class BoardCardController extends Controller
     public function updateLabel(Request $request, BoardCard $boardCard)
     {
         $this->assertCanAccessBoardCard($boardCard);
+
+        $beforeCountryIds = $this->extractCardLabelIds($boardCard->country_label_id, $boardCard->country_label_ids);
+        $beforeIntakeId = !is_null($boardCard->intake_label_id) ? (int) $boardCard->intake_label_id : null;
+        $beforeServiceAreaIds = $this->extractCardLabelIds($boardCard->service_area_id, $boardCard->service_area_ids);
 
         $validated = $request->validate([
             'country_label_id' => 'nullable|exists:country_labels,id',
@@ -475,13 +900,41 @@ class BoardCardController extends Controller
             $boardCard->update($payload);
         }
 
-        Activity::create([
-            'user_id'   => Auth::id(),
-            'user_name' => $this->userFullName(),
-            'card_id'   => $boardCard->id,
-            'action'    => 'updated labels',
-            'details'   => 'Country / Intake / Service labels changed',
-        ]);
+        $boardCard->refresh();
+
+        $afterCountryIds = $this->extractCardLabelIds($boardCard->country_label_id, $boardCard->country_label_ids);
+        $afterIntakeId = !is_null($boardCard->intake_label_id) ? (int) $boardCard->intake_label_id : null;
+        $afterServiceAreaIds = $this->extractCardLabelIds($boardCard->service_area_id, $boardCard->service_area_ids);
+
+        $changeLines = [];
+
+        if ($beforeCountryIds !== $afterCountryIds) {
+            $beforeCountryNames = $this->resolveModelNamesByIds(CountryLabel::class, $beforeCountryIds, 'Country');
+            $afterCountryNames = $this->resolveModelNamesByIds(CountryLabel::class, $afterCountryIds, 'Country');
+            $changeLines[] = 'Country: ' . $this->formatActivityList($beforeCountryNames) . ' -> ' . $this->formatActivityList($afterCountryNames);
+        }
+
+        if ($beforeIntakeId !== $afterIntakeId) {
+            $beforeIntakeNames = $beforeIntakeId ? $this->resolveModelNamesByIds(IntakeLabel::class, [$beforeIntakeId], 'Intake') : [];
+            $afterIntakeNames = $afterIntakeId ? $this->resolveModelNamesByIds(IntakeLabel::class, [$afterIntakeId], 'Intake') : [];
+            $changeLines[] = 'Intake: ' . $this->formatActivityList($beforeIntakeNames) . ' -> ' . $this->formatActivityList($afterIntakeNames);
+        }
+
+        if ($beforeServiceAreaIds !== $afterServiceAreaIds) {
+            $beforeServiceNames = $this->resolveModelNamesByIds(ServiceArea::class, $beforeServiceAreaIds, 'Service area');
+            $afterServiceNames = $this->resolveModelNamesByIds(ServiceArea::class, $afterServiceAreaIds, 'Service area');
+            $changeLines[] = 'Service area: ' . $this->formatActivityList($beforeServiceNames) . ' -> ' . $this->formatActivityList($afterServiceNames);
+        }
+
+        if (!empty($changeLines)) {
+            Activity::create([
+                'user_id'   => Auth::id(),
+                'user_name' => $this->userFullName(),
+                'card_id'   => $boardCard->id,
+                'action'    => 'updated labels',
+                'details'   => implode("\n", $changeLines),
+            ]);
+        }
 
         return response()->json(
             $boardCard->fresh(['countryLabel', 'intakeLabel', 'serviceArea'])
@@ -493,18 +946,27 @@ class BoardCardController extends Controller
     {
         $this->assertCanAccessBoardCard($boardCard);
 
+        $beforeDescription = (string) ($boardCard->description ?? '');
+
         $validated = $request->validate([
             'description' => 'nullable|string|max:2000',
         ]);
 
-        $boardCard->update($validated);
+        $nextDescription = (string) ($validated['description'] ?? '');
+        if (trim($beforeDescription) === trim($nextDescription)) {
+            return response()->json($boardCard->fresh());
+        }
+
+        $boardCard->update([
+            'description' => $validated['description'] ?? null,
+        ]);
 
         Activity::create([
             'user_id'   => Auth::id(),
             'user_name' => $this->userFullName(),
             'card_id'   => $boardCard->id,
             'action'    => 'updated description',
-            'details'   => 'Description updated',
+            'details'   => 'Description: ' . $this->formatActivityChange($beforeDescription, $nextDescription, null),
         ]);
 
         return response()->json($boardCard->fresh());
@@ -579,21 +1041,26 @@ class BoardCardController extends Controller
             'due_date' => 'nullable|date',
         ]);
 
-        $oldDate = $boardCard->due_date;
-        $newDate = $validated['due_date'];
+        $oldDate = $boardCard->due_date ? Carbon::parse($boardCard->due_date)->toDateString() : null;
+        $newDate = !empty($validated['due_date']) ? Carbon::parse($validated['due_date'])->toDateString() : null;
 
-        $boardCard->update($validated);
+        if ($oldDate === $newDate) {
+            return response()->json($boardCard->fresh());
+        }
 
-        $detail = $oldDate
-            ? "changed from " . Carbon::parse($oldDate)->format('M d, Y') . " to " . ($newDate ? Carbon::parse($newDate)->format('M d, Y') : 'unset')
-            : ($newDate ? "set to " . Carbon::parse($newDate)->format('M d, Y') : 'removed');
+        $boardCard->update([
+            'due_date' => $validated['due_date'] ?? null,
+        ]);
+
+        $oldLabel = $oldDate ? Carbon::parse($oldDate)->format('M d, Y') : 'None';
+        $newLabel = $newDate ? Carbon::parse($newDate)->format('M d, Y') : 'None';
 
         Activity::create([
             'user_id'   => Auth::id(),
             'user_name' => $this->userFullName(),
             'card_id'   => $boardCard->id,
             'action'    => 'updated due date',
-            'details'   => $detail,
+            'details'   => 'Due date: ' . $oldLabel . ' -> ' . $newLabel,
         ]);
 
         return response()->json($boardCard->fresh());
@@ -647,9 +1114,17 @@ class BoardCardController extends Controller
             'user_ids.*' => 'integer|exists:users,id',
         ]);
 
+        $existingMemberIds = $boardCard->members()
+            ->pluck('users.id')
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->sort()
+            ->values();
+
         $requestedIds = collect($validated['user_ids'] ?? [])
             ->map(fn ($id) => (int) $id)
             ->unique()
+            ->sort()
             ->values();
 
         $allowedIds = $this->eligibleMemberUsersQuery($boardCard)
@@ -688,15 +1163,40 @@ class BoardCardController extends Controller
 
         $boardCard->members()->sync($requestedIds->all());
 
-        Activity::create([
-            'user_id'   => Auth::id(),
-            'user_name' => $this->userFullName(),
-            'card_id'   => $boardCard->id,
-            'action'    => 'updated members',
-            'details'   => $requestedIds->isEmpty()
-                ? 'Card visibility set to everyone with board access'
-                : 'Card visibility restricted to selected members',
-        ]);
+        $addedIds = $requestedIds->diff($existingMemberIds)->values()->all();
+        $removedIds = $existingMemberIds->diff($requestedIds)->values()->all();
+        $visibilityChanged = $requestedIds->isEmpty() !== $existingMemberIds->isEmpty();
+
+        $detailLines = [];
+        if ($visibilityChanged) {
+            $detailLines[] = $requestedIds->isEmpty()
+                ? 'Visibility: restricted members -> everyone with board access'
+                : 'Visibility: everyone with board access -> restricted members';
+        }
+
+        if (!empty($addedIds)) {
+            $detailLines[] = 'Added members: ' . $this->formatActivityList($this->resolveUserNamesByIds($addedIds));
+        }
+
+        if (!empty($removedIds)) {
+            $detailLines[] = 'Removed members: ' . $this->formatActivityList($this->resolveUserNamesByIds($removedIds));
+        }
+
+        $hasMemberChanges = $visibilityChanged || !empty($addedIds) || !empty($removedIds);
+
+        if ($hasMemberChanges && $requestedIds->isNotEmpty()) {
+            $detailLines[] = 'Current members: ' . $this->formatActivityList($this->resolveUserNamesByIds($requestedIds->all()));
+        }
+
+        if ($hasMemberChanges && !empty($detailLines)) {
+            Activity::create([
+                'user_id'   => Auth::id(),
+                'user_name' => $this->userFullName(),
+                'card_id'   => $boardCard->id,
+                'action'    => 'updated members',
+                'details'   => implode("\n", $detailLines),
+            ]);
+        }
 
         $members = $boardCard->members()
             ->select('users.id', 'users.first_name', 'users.last_name', 'users.email', 'users.role_id')
@@ -776,13 +1276,7 @@ class BoardCardController extends Controller
                 $scope
                     ->whereNull('card_id')
                     ->orWhereHas('card', function ($cardQuery) use ($user) {
-                        $cardQuery->where(function ($visibleCardQuery) use ($user) {
-                            $visibleCardQuery
-                                ->whereDoesntHave('members')
-                                ->orWhereHas('members', function ($memberQuery) use ($user) {
-                                    $memberQuery->where('users.id', $user->id);
-                                });
-                        });
+                        $this->applyCardVisibilityScope($cardQuery, $user);
                     });
             });
         }

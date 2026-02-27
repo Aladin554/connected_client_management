@@ -8,6 +8,17 @@ use Illuminate\Http\Request;
 
 class BoardListController extends Controller
 {
+    private function isCommissionBoardName(?string $name): bool
+    {
+        $normalized = strtolower(trim((string) $name));
+        return str_contains($normalized, 'commission') || str_contains($normalized, 'comission');
+    }
+
+    private function isCommissionBoard(Board $board): bool
+    {
+        return $this->isCommissionBoardName($board->name ?? null);
+    }
+
     private function canManageAllLists($user): bool
     {
         return (int) $user->role_id === 1;
@@ -19,6 +30,10 @@ class BoardListController extends Controller
 
         if (!$user) {
             abort(401, 'Unauthenticated');
+        }
+
+        if ($this->isCommissionBoard($board) && (int) $user->role_id !== 1) {
+            abort(403, 'Forbidden');
         }
 
         // Superadmin can access everything.
@@ -56,6 +71,11 @@ class BoardListController extends Controller
                     ->orderBy('position');
             },
         ]);
+
+        if ($this->isCommissionBoard($board)) {
+            $query->where('category', BoardList::CATEGORY_COMMISSION_BOARD);
+        }
+
         if (!$this->canManageAllLists(auth()->user())) {
             $query->whereHas('users', function ($userQuery) {
                 $userQuery->where('users.id', auth()->id());
@@ -71,14 +91,37 @@ class BoardListController extends Controller
 
         $validated = $request->validate([
             'title'    => 'required|string|max:255',
-            'category' => 'nullable|integer|in:0,1,2,3',
+            'category' => 'nullable|integer|in:0,1,2,3,4',
             'position' => 'nullable|integer|min:0',
         ]);
+
+        $requestedCategory = array_key_exists('category', $validated)
+            ? (int) $validated['category']
+            : null;
+
+        if ($this->isCommissionBoard($board)) {
+            if (
+                $requestedCategory !== null &&
+                $requestedCategory !== BoardList::CATEGORY_COMMISSION_BOARD
+            ) {
+                return response()->json([
+                    'message' => 'Only Commission Board category is allowed for this board',
+                ], 422);
+            }
+            $finalCategory = BoardList::CATEGORY_COMMISSION_BOARD;
+        } else {
+            if ($requestedCategory === BoardList::CATEGORY_COMMISSION_BOARD) {
+                return response()->json([
+                    'message' => 'Commission Board category can only be used in Commission Board',
+                ], 422);
+            }
+            $finalCategory = $requestedCategory ?? BoardList::CATEGORY_ADMISSION;
+        }
 
         $maxPosition = $board->lists()->max('position') ?? 0;
         $list = $board->lists()->create([
             'title'    => $validated['title'],
-            'category' => $validated['category'] ?? BoardList::CATEGORY_ADMISSION,
+            'category' => $finalCategory,
             'position' => $validated['position'] ?? $maxPosition + 10000,
         ]);
 
@@ -119,9 +162,24 @@ class BoardListController extends Controller
 
         $validated = $request->validate([
             'title'    => 'sometimes|required|string|max:255',
-            'category' => 'sometimes|integer|in:0,1,2,3',
+            'category' => 'sometimes|integer|in:0,1,2,3,4',
             'position' => 'sometimes|integer|min:0',
         ]);
+
+        if (array_key_exists('category', $validated)) {
+            $requestedCategory = (int) $validated['category'];
+            if ($this->isCommissionBoard($board)) {
+                if ($requestedCategory !== BoardList::CATEGORY_COMMISSION_BOARD) {
+                    return response()->json([
+                        'message' => 'Only Commission Board category is allowed for this board',
+                    ], 422);
+                }
+            } elseif ($requestedCategory === BoardList::CATEGORY_COMMISSION_BOARD) {
+                return response()->json([
+                    'message' => 'Commission Board category can only be used in Commission Board',
+                ], 422);
+            }
+        }
 
         $boardList->update($validated);
 

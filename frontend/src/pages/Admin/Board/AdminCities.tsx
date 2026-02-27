@@ -71,6 +71,11 @@ const CATEGORY_META: { id: number; label: string; chipClass: string }[] = [
 const getCategoryId = (list: BoardList): number =>
   [0, 1, 2, 3].includes(Number(list.category)) ? Number(list.category) : 0;
 
+const isCommissionBoard = (name: string): boolean => {
+  const normalized = (name || "").toLowerCase();
+  return normalized.includes("commission") || normalized.includes("comission");
+};
+
 export default function AdminCities() {
   const [cities, setCities] = useState<City[]>([]);
   const [users, setUsers] = useState<User[]>([]);
@@ -174,7 +179,9 @@ export default function AdminCities() {
   const selectedCities = cities.filter((city) => selectedCityIds.includes(city.id));
   const selectedBoards = cities
     .flatMap((city) => city.boards)
-    .filter((board) => selectedBoardIds.includes(board.id));
+    .filter(
+      (board) => !isCommissionBoard(board.name) && selectedBoardIds.includes(board.id)
+    );
 
   // -- Permission Toggles ---------------------------------------
 
@@ -206,6 +213,14 @@ export default function AdminCities() {
 
         setSelectedListIds((p) => p.filter((id) => !listIds.includes(id)));
         return prev.filter((id) => id !== boardId);
+      }
+
+      const board = cities
+        .flatMap((c) => c.boards)
+        .find((b) => b.id === boardId);
+      const listIds = board?.lists?.map((l) => l.id) || [];
+      if (listIds.length > 0) {
+        setSelectedListIds((p) => [...new Set([...p, ...listIds])]);
       }
 
       const parentCity = cities.find((c) => c.boards.some((b) => b.id === boardId));
@@ -430,7 +445,7 @@ export default function AdminCities() {
               Boards
             </h3>
             <span className="text-xs px-2 py-1 rounded bg-indigo-100 text-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-300">
-              {selectedBoardIds.length} selected
+              {selectedBoards.length} selected
             </span>
           </div>
 
@@ -441,7 +456,9 @@ export default function AdminCities() {
                   {city.name}
                 </p>
                 <div className="flex flex-wrap gap-2">
-                  {city.boards.map((board) => (
+                  {city.boards
+                    .filter((board) => !isCommissionBoard(board.name))
+                    .map((board) => (
                     <label
                       key={board.id}
                       className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm cursor-pointer transition ${
@@ -458,7 +475,7 @@ export default function AdminCities() {
                         className="h-4 w-4 rounded text-indigo-600"
                       />
                     </label>
-                  ))}
+                    ))}
                 </div>
               </div>
             ))}
@@ -568,7 +585,10 @@ export default function AdminCities() {
                 <tr key={city.id} className="border-t">
                   <td className="px-6 py-4 border-r">{city.name}</td>
                   <td className="px-6 py-4 border-r">
-                    {city.boards.map((b) => b.name).join(", ") || "—"}
+                    {city.boards
+                      .filter((b) => !isCommissionBoard(b.name))
+                      .map((b) => b.name)
+                      .join(", ") || "—"}
                   </td>
                   <td className="px-6 py-4 border-r">{formatDate(city.created_at)}</td>
                   <td className="px-6 py-4 border-r">{formatDate(city.updated_at)}</td>

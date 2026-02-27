@@ -41,6 +41,8 @@ export default function CardDetailModal({
   );
   const [savingDescription, setSavingDescription] = useState(false);
   const descriptionTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const descriptionSaveInFlightRef = useRef(false);
+  const skipDescriptionBlurSaveRef = useRef(false);
 
   // Due Date
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -426,11 +428,16 @@ export default function CardDetailModal({
   };
 
   const handleSaveDescription = async () => {
+    if (descriptionSaveInFlightRef.current) return;
+
     const trimmed = editedDescription.trim();
-    if (trimmed === (card.description || "")) {
+    const currentDescription = (card.description || "").trim();
+    if (trimmed === currentDescription) {
       setIsEditingDescription(false);
       return;
     }
+
+    descriptionSaveInFlightRef.current = true;
     setSavingDescription(true);
     try {
       await api.put(`/cards/${card.id}/description`, { description: trimmed || null });
@@ -445,7 +452,16 @@ export default function CardDetailModal({
       alert("Could not save description.");
     } finally {
       setSavingDescription(false);
+      descriptionSaveInFlightRef.current = false;
     }
+  };
+
+  const handleDescriptionBlur = () => {
+    if (skipDescriptionBlurSaveRef.current) {
+      skipDescriptionBlurSaveRef.current = false;
+      return;
+    }
+    void handleSaveDescription();
   };
 
   const openDescriptionEditor = () => {
@@ -462,7 +478,7 @@ export default function CardDetailModal({
   };
 
   const handleSaveCardIdentity = async () => {
-    if (!canEditCardIdentity) return;
+    if (!canEditCardIdentity || savingCardIdentity) return;
 
     const nextInvoice = editedInvoice.trim();
     const nextFirstName = editedFirstName.trim();
@@ -506,7 +522,10 @@ export default function CardDetailModal({
       setIsEditingCardIdentity(false);
     } catch (err: any) {
       console.error("Failed to update card identity:", err);
-      alert(err?.response?.data?.message || "Could not update card details.");
+      const apiMessage =
+        err?.response?.data?.errors?.invoice?.[0] ||
+        err?.response?.data?.message;
+      alert(apiMessage || "Could not update card details.");
     } finally {
       setSavingCardIdentity(false);
     }
@@ -674,6 +693,178 @@ export default function CardDetailModal({
         {lineIndex < lines.length - 1 ? <br /> : null}
       </React.Fragment>
     ));
+  };
+
+  const getLabelChangeLineTone = (line: string) => {
+    const normalized = line.trim().toLowerCase();
+    if (normalized.startsWith("country:")) {
+      return {
+        label: "Country",
+        badgeClass:
+          "inline-flex items-center rounded-full border border-[#8f53c6] bg-[#8f53c6] px-2 py-0.5 text-xs font-semibold text-white",
+        valueClass: "text-[#5f3a8c]",
+      };
+    }
+    if (normalized.startsWith("intake:")) {
+      return {
+        label: "Intake",
+        badgeClass:
+          "inline-flex items-center rounded-full border border-[#f2b205] bg-[#f2b205] px-2 py-0.5 text-xs font-semibold text-[#4a2b00]",
+        valueClass: "text-[#7a4a00]",
+      };
+    }
+    if (normalized.startsWith("service area:")) {
+      return {
+        label: "Service Area",
+        badgeClass:
+          "inline-flex items-center rounded-full border border-[#d63a3a] bg-[#d63a3a] px-2 py-0.5 text-xs font-semibold text-white",
+        valueClass: "text-[#8f2a2a]",
+      };
+    }
+    return null;
+  };
+
+  const isLabelChangeActivity = (action?: string, details?: string) => {
+    if ((action || "").toLowerCase().includes("label")) return true;
+    if (!details) return false;
+
+    return details
+      .split(/\r?\n/)
+      .some((line) => !!getLabelChangeLineTone(line));
+  };
+
+  const renderLabelChangeDetails = (details?: string) => {
+    if (!details) return null;
+
+    const lines = details
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+
+    if (lines.length === 0) return null;
+
+    return (
+      <div className="space-y-1.5">
+        {lines.map((line, lineIndex) => {
+          const tone = getLabelChangeLineTone(line);
+          if (!tone) {
+            return (
+              <div key={`label-change-plain-${lineIndex}`} className="text-sm text-gray-700">
+                {renderTextWithLinks(line)}
+              </div>
+            );
+          }
+
+          const separatorIndex = line.indexOf(":");
+          const value = separatorIndex >= 0 ? line.slice(separatorIndex + 1).trim() : line;
+
+          return (
+            <div key={`label-change-row-${lineIndex}`} className="flex flex-wrap items-start gap-2">
+              <span className={tone.badgeClass}>{tone.label}</span>
+              <span className={`min-w-0 text-sm ${tone.valueClass}`}>
+                {renderTextWithLinks(value || "None")}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  const parseDescriptionChangeDetails = (
+    details?: string
+  ): { before: string; after: string } | null => {
+    if (!details) return null;
+
+    const lines = details.split(/\r?\n/);
+    const descriptionLine = lines.find((line) => line.trim().toLowerCase().startsWith("description:"));
+    if (!descriptionLine) return null;
+
+    const payload = descriptionLine.trim().slice("Description:".length).trim();
+    const separator = '" -> "';
+    if (!payload.startsWith('"') || !payload.endsWith('"') || !payload.includes(separator)) {
+      return null;
+    }
+
+    const separatorIndex = payload.indexOf(separator);
+    if (separatorIndex <= 0) return null;
+
+    const before = payload.slice(1, separatorIndex);
+    const after = payload.slice(separatorIndex + separator.length, payload.length - 1);
+
+    return {
+      before: before.trim() || "[empty]",
+      after: after.trim() || "[empty]",
+    };
+  };
+
+  const computeInlineDiff = (before: string, after: string) => {
+    let start = 0;
+    const maxPrefix = Math.min(before.length, after.length);
+    while (start < maxPrefix && before[start] === after[start]) {
+      start += 1;
+    }
+
+    let beforeEnd = before.length - 1;
+    let afterEnd = after.length - 1;
+    while (beforeEnd >= start && afterEnd >= start && before[beforeEnd] === after[afterEnd]) {
+      beforeEnd -= 1;
+      afterEnd -= 1;
+    }
+
+    return {
+      prefix: before.slice(0, start),
+      beforeChanged: before.slice(start, beforeEnd + 1),
+      afterChanged: after.slice(start, afterEnd + 1),
+      suffix: before.slice(beforeEnd + 1),
+    };
+  };
+
+  const renderDescriptionDiffText = (
+    prefix: string,
+    changed: string,
+    suffix: string,
+    highlightClass: string
+  ) => (
+    <>
+      {prefix}
+      {changed ? <mark className={`rounded px-0.5 ${highlightClass}`}>{changed}</mark> : null}
+      {suffix}
+    </>
+  );
+
+  const renderDescriptionChangeDetails = (details?: string) => {
+    const parsed = parseDescriptionChangeDetails(details);
+    if (!parsed) return null;
+
+    const diff = computeInlineDiff(parsed.before, parsed.after);
+
+    return (
+      <div className="space-y-2">
+        <div className="rounded-md border border-rose-200 bg-rose-50 p-2.5">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-rose-700">Before</p>
+          <p className="mt-1 whitespace-pre-wrap break-words text-sm text-rose-900">
+            {renderDescriptionDiffText(
+              diff.prefix,
+              diff.beforeChanged,
+              diff.suffix,
+              "bg-rose-200/80 text-rose-900"
+            )}
+          </p>
+        </div>
+        <div className="rounded-md border border-emerald-200 bg-emerald-50 p-2.5">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">After</p>
+          <p className="mt-1 whitespace-pre-wrap break-words text-sm text-emerald-900">
+            {renderDescriptionDiffText(
+              diff.prefix,
+              diff.afterChanged,
+              diff.suffix,
+              "bg-emerald-200/90 text-emerald-900"
+            )}
+          </p>
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -922,6 +1113,9 @@ export default function CardDetailModal({
                 {isEditingDescription ? (
                   <div className="flex gap-3">
                     <button
+                      onMouseDown={() => {
+                        skipDescriptionBlurSaveRef.current = true;
+                      }}
                       onClick={() => {
                         setIsEditingDescription(false);
                         setEditedDescription(
@@ -934,6 +1128,9 @@ export default function CardDetailModal({
                       Cancel
                     </button>
                     <button
+                      onMouseDown={() => {
+                        skipDescriptionBlurSaveRef.current = true;
+                      }}
                       onClick={handleSaveDescription}
                       className={`px-5 py-1.5 text-sm font-bold rounded text-white ${
                         savingDescription ? "bg-indigo-400 cursor-not-allowed" : "bg-indigo-600 hover:bg-indigo-700"
@@ -960,6 +1157,7 @@ export default function CardDetailModal({
                     ref={descriptionTextareaRef}
                     value={editedDescription}
                     onChange={(e) => setEditedDescription(e.target.value)}
+                    onBlur={handleDescriptionBlur}
                     className="w-full border border-gray-300 rounded-lg px-4 py-3 text-sm resize-none overflow-hidden min-h-[180px] focus:outline-none focus:ring-2 focus:ring-indigo-400 transition"
                     placeholder="Fill student profile details..."
                     autoFocus
@@ -1060,7 +1258,11 @@ export default function CardDetailModal({
                 {activities.length === 0 ? (
                   <p className="text-center text-gray-500">No activities yet</p>
                 ) : (
-                  activities.map((activity) => (
+                  activities.map((activity) => {
+                    const hasLabelChangeDetails = isLabelChangeActivity(activity.action, activity.details);
+                    const hasDescriptionChangeDetails = !!parseDescriptionChangeDetails(activity.details);
+
+                    return (
                     <div key={activity.id} className="flex gap-3">
                       <div className="w-9 h-9 bg-teal-600 text-white rounded-full flex items-center justify-center font-bold text-sm shrink-0">
                         {(activity.user_name || "U").charAt(0).toUpperCase()}
@@ -1068,13 +1270,24 @@ export default function CardDetailModal({
                       <div className="flex-1 space-y-1.5">
                         <p className="text-sm leading-relaxed">
                           <strong className="text-gray-900">{activity.user_name || "User"}</strong> {activity.action}
-                          {activity.details && activity.action !== "commented" ? (
-                            <>
-                              {" "}
-                              {renderTextWithLinks(activity.details)}
-                            </>
-                          ) : null}
                         </p>
+                        {activity.details && activity.action !== "commented" ? (
+                          <div
+                            className={`mt-1 text-sm leading-relaxed ${
+                              hasLabelChangeDetails
+                                ? "rounded-lg border border-indigo-100 bg-indigo-50/40 p-3 text-gray-700"
+                                : hasDescriptionChangeDetails
+                                ? "rounded-lg border border-emerald-100 bg-emerald-50/30 p-3 text-gray-700"
+                                : "text-gray-700"
+                            }`}
+                          >
+                            {hasLabelChangeDetails
+                              ? renderLabelChangeDetails(activity.details)
+                              : hasDescriptionChangeDetails
+                              ? renderDescriptionChangeDetails(activity.details)
+                              : renderTextWithLinks(activity.details)}
+                          </div>
+                        ) : null}
                         <p className="text-xs text-gray-500">{formatTimestamp(activity.created_at)}</p>
                         {activity.action === "commented" && activity.details && (
                           <div className="mt-2 bg-white border border-gray-200 rounded-lg p-3 text-sm text-gray-700 whitespace-pre-wrap break-words">
@@ -1104,7 +1317,8 @@ export default function CardDetailModal({
                         </button>
                       </div>
                     </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
             </div>
@@ -1490,4 +1704,3 @@ export default function CardDetailModal({
     </div>
   );
 }
-

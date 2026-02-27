@@ -84,6 +84,8 @@ Route::middleware(['auth:sanctum', CheckPanelAccess::class, 'admin.ip'])->group(
     Route::put('/cards/{boardCard}/payment', [BoardCardController::class, 'updatePaymentStatus']);
     Route::put('/cards/{boardCard}/dependant-payment', [BoardCardController::class, 'updateDependantPaymentStatus']);
     Route::put('/cards/{boardCard}/archive', [BoardCardController::class, 'updateArchiveStatus']);
+    Route::get('/cards/{boardCard}/commission-targets', [BoardCardController::class, 'commissionMoveTargets']);
+    Route::put('/cards/{boardCard}/move-to-commission', [BoardCardController::class, 'moveToCommissionBoard']);
     Route::get('/cards/{boardCard}/members', [BoardCardController::class, 'members']);
     Route::put('/cards/{boardCard}/members', [BoardCardController::class, 'updateMembers']);
 

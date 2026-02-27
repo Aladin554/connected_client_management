@@ -3,13 +3,25 @@
 namespace App\Http\Controllers;
 
 use App\Models\Board;
+use App\Models\BoardList;
 use Illuminate\Http\Request;
 
 class BoardController extends Controller
 {
+    private function isCommissionBoardName(?string $name): bool
+    {
+        $normalized = strtolower(trim((string) $name));
+        return str_contains($normalized, 'commission') || str_contains($normalized, 'comission');
+    }
+
+    private function isCommissionBoard(Board $board): bool
+    {
+        return $this->isCommissionBoardName($board->name ?? null);
+    }
+
     private function canBypassListPermissions($user): bool
     {
-        return (int) $user->role_id === 1;
+        return in_array((int) $user->role_id, [1, 2], true);
     }
 
     private function canBypassCardMemberVisibility($user): bool
@@ -17,10 +29,41 @@ class BoardController extends Controller
         return in_array((int) $user->role_id, [1, 2], true);
     }
 
-    private function applyBoardWithListsAndCards($query, $user)
+    private function requiresExplicitCardMembership($user): bool
+    {
+        return in_array((int) $user->role_id, [3, 4], true);
+    }
+
+    private function applyCardVisibilityScope($cardQuery, $user): void
+    {
+        if ($this->canBypassCardMemberVisibility($user)) {
+            return;
+        }
+
+        if ($this->requiresExplicitCardMembership($user)) {
+            $cardQuery->whereHas('members', function ($memberQuery) use ($user) {
+                $memberQuery->where('users.id', $user->id);
+            });
+            return;
+        }
+
+        $cardQuery->where(function ($visibleQuery) use ($user) {
+            $visibleQuery
+                ->whereDoesntHave('members')
+                ->orWhereHas('members', function ($memberQuery) use ($user) {
+                    $memberQuery->where('users.id', $user->id);
+                });
+        });
+    }
+
+    private function applyBoardWithListsAndCards($query, $user, bool $commissionCategoryOnly = false)
     {
         return $query->with([
-            'lists' => function ($listQuery) use ($user) {
+            'lists' => function ($listQuery) use ($user, $commissionCategoryOnly) {
+                if ($commissionCategoryOnly) {
+                    $listQuery->where('category', BoardList::CATEGORY_COMMISSION_BOARD);
+                }
+
                 if (!$this->canBypassListPermissions($user)) {
                     $listQuery->whereHas('users', function ($userQuery) use ($user) {
                         $userQuery->where('users.id', $user->id);
@@ -31,16 +74,7 @@ class BoardController extends Controller
                     'cards' => function ($cardQuery) use ($user) {
                         $cardQuery->where('is_archived', false);
                         $cardQuery->orderBy('position');
-
-                        if (!$this->canBypassCardMemberVisibility($user)) {
-                            $cardQuery->where(function ($visibleQuery) use ($user) {
-                                $visibleQuery
-                                    ->whereDoesntHave('members')
-                                    ->orWhereHas('members', function ($memberQuery) use ($user) {
-                                        $memberQuery->where('users.id', $user->id);
-                                    });
-                            });
-                        }
+                        $this->applyCardVisibilityScope($cardQuery, $user);
 
                         $cardQuery->with([
                             'members' => function ($memberQuery) {
@@ -68,7 +102,14 @@ class BoardController extends Controller
             $boards = $this->applyBoardWithListsAndCards(Board::query(), $user)->latest()->get();
         } else {
             // Other users see only assigned boards
-            $boards = $this->applyBoardWithListsAndCards($user->boards(), $user)->get();
+            $boards = $this->applyBoardWithListsAndCards(
+                $user->boards()->where(function ($query) {
+                    $query
+                        ->whereRaw('LOWER(name) NOT LIKE ?', ['%commission%'])
+                        ->whereRaw('LOWER(name) NOT LIKE ?', ['%comission%']);
+                }),
+                $user
+            )->get();
         }
 
         return response()->json(['data' => $boards]);
@@ -104,6 +145,10 @@ class BoardController extends Controller
     {
         $user = auth()->user();
 
+        if ($this->isCommissionBoard($board) && (int) $user->role_id !== 1) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
         if ((int) $user->role_id !== 1 && !$user->boards()->whereKey($board->id)->exists()) {
             return response()->json(['message' => 'Unauthorized'], 403);
         }
@@ -111,7 +156,8 @@ class BoardController extends Controller
         return response()->json([
             'data' => $this->applyBoardWithListsAndCards(
                 Board::query()->whereKey($board->id),
-                $user
+                $user,
+                $this->isCommissionBoard($board)
             )->firstOrFail(),
         ]);
     }
@@ -165,7 +211,13 @@ class BoardController extends Controller
         if ((int) $user->role_id === 1) {
             $boards = Board::latest()->get(['id', 'name']);
         } else {
-            $boards = $user->boards()->get(['id', 'name']);
+            $boards = $user->boards()
+                ->where(function ($query) {
+                    $query
+                        ->whereRaw('LOWER(name) NOT LIKE ?', ['%commission%'])
+                        ->whereRaw('LOWER(name) NOT LIKE ?', ['%comission%']);
+                })
+                ->get(['id', 'name']);
         }
 
         $gradients = [

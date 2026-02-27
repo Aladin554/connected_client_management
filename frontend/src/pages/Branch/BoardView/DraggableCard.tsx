@@ -1,14 +1,18 @@
+import type { MouseEvent as ReactMouseEvent } from "react";
 import { SquarePen, Tag } from "lucide-react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { Card, CardLabelBadge } from "./types";
-import { getMemberInitials, MEMBER_SHORTCUT_COLORS } from "./utils";
+import { formatDateWithOrdinal, getMemberInitials, MEMBER_SHORTCUT_COLORS } from "./utils";
 
 interface DraggableCardProps {
   card: Card;
   onClick: (card: Card) => void;
   labelBadges?: CardLabelBadge[];
   dragDisabled?: boolean;
+  showActions?: boolean;
+  disableActions?: boolean;
+  onOpenActions?: (card: Card, position: { x: number; y: number }) => void;
 }
 
 export default function DraggableCard({
@@ -16,6 +20,9 @@ export default function DraggableCard({
   onClick,
   labelBadges = [],
   dragDisabled = false,
+  showActions = false,
+  disableActions = false,
+  onOpenActions,
 }: DraggableCardProps) {
   const { setNodeRef, attributes, listeners, transform, transition } = useSortable({
     id: card.id,
@@ -33,6 +40,17 @@ export default function DraggableCard({
     (label) => label.kind === "country" || label.kind === "intake"
   );
 
+  const stopEventPropagation = (event: ReactMouseEvent<HTMLElement>) => {
+    event.stopPropagation();
+  };
+
+  const handleContextMenu = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (!showActions || disableActions || !onOpenActions) return;
+    event.preventDefault();
+    event.stopPropagation();
+    onOpenActions(card, { x: event.clientX, y: event.clientY });
+  };
+
   return (
     <div
       ref={setNodeRef}
@@ -40,28 +58,45 @@ export default function DraggableCard({
       {...attributes}
       {...listeners}
       onClick={() => onClick(card)}
+      onContextMenu={handleContextMenu}
       className={`relative bg-white rounded-xl border border-gray-200 px-4 py-4 shadow-sm transition-shadow select-none ${
         dragDisabled ? "cursor-default" : "cursor-pointer hover:shadow-md"
       }`}
     >
-      <button className="absolute right-3 top-3 p-1.5 rounded-md hover:bg-gray-100 shrink-0">
-        <SquarePen size={16} className="text-gray-600" />
-      </button>
+      <div className="absolute right-3 top-3 z-10 flex items-center gap-1">
+        <button
+          type="button"
+          onMouseDown={stopEventPropagation}
+          onPointerDown={stopEventPropagation}
+          onClick={(event) => {
+            event.stopPropagation();
+            onClick(card);
+          }}
+          className="p-1.5 rounded-md shrink-0 text-gray-600 hover:bg-gray-100"
+          title="Edit card"
+          aria-label="Edit card"
+        >
+          <SquarePen size={16} />
+        </button>
+      </div>
 
       <div className="min-w-0">
-        <div className="pr-9">
+        <div className="pr-10">
           <p className="text-sm font-bold text-indigo-700">{displayText}</p>
+          <p className="text-xs text-gray-500 mt-1">
+            {formatDateWithOrdinal(card.created_at)}
+          </p>
         </div>
 
         {(previewLabelBadges.length > 0 || (card.members && card.members.length > 0)) && (
           <div className="mt-4 flex w-full items-start gap-2">
             {previewLabelBadges.length > 0 ? (
-              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-                <Tag size={12} className="text-gray-500" />
+              <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto whitespace-nowrap no-scrollbar pr-1">
+                <Tag size={12} className="shrink-0 text-gray-500" />
                 {previewLabelBadges.map((label, index) => (
                   <span
                     key={`${label.kind}-${label.name}-${index}`}
-                    className={`px-2 py-0.5 rounded-md text-[10px] font-semibold ${
+                    className={`shrink-0 px-2 py-0.5 rounded-md text-[10px] font-semibold ${
                       label.kind === "country"
                         ? "bg-[#8f53c6] text-white"
                         : "bg-[#f2b205] text-[#4a2b00]"

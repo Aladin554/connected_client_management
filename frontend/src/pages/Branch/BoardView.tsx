@@ -15,12 +15,12 @@ import {
   Archive,
   ChevronDown,
   Filter,
+  MoreHorizontal,
   MessageSquare,
   LayoutGrid,
   Plus,
   RotateCcw,
   Search,
-  Trash2,
   X,
 } from "lucide-react";
 import {
@@ -58,6 +58,118 @@ const ROLE_NAME_BY_ID: Record<number, string> = {
   4: "counsellor",
 };
 
+const BOARD_BACKGROUND_COLORS = [
+  "#6A359C",
+  "#A52A2A",
+  "#2066B0",
+  "#0F766E",
+  "#DC2626",
+  "#B91C1C",
+  "#EA580C",
+  "#C2410C",
+  "#D97706",
+  "#A16207",
+  "#CA8A04",
+  "#65A30D",
+  "#4D7C0F",
+  "#16A34A",
+  "#15803D",
+  "#059669",
+  "#047857",
+  "#0D9488",
+  "#0891B2",
+  "#0E7490",
+  "#0284C7",
+  "#0369A1",
+  "#2563EB",
+  "#1D4ED8",
+  "#4F46E5",
+  "#4338CA",
+  "#7C3AED",
+  "#6D28D9",
+  "#9333EA",
+  "#7E22CE",
+  "#A21CAF",
+  "#86198F",
+  "#C026D3",
+  "#DB2777",
+  "#BE185D",
+  "#E11D48",
+  "#BE123C",
+  "#F43F5E",
+  "#FB7185",
+  "#F97316",
+  "#FB923C",
+  "#F59E0B",
+  "#EAB308",
+  "#84CC16",
+  "#22C55E",
+  "#10B981",
+  "#14B8A6",
+  "#06B6D4",
+  "#3B82F6",
+  "#6366F1",
+] as const;
+type BoardBackgroundColor = string;
+const DEFAULT_BOARD_BACKGROUND_COLOR = "#6A359C";
+const BOARD_BACKGROUND_STORAGE_PREFIX = "board-bg-theme-v3";
+
+const clampByte = (value: number): number => Math.max(0, Math.min(255, Math.round(value)));
+
+const hexToRgb = (hex: string): { r: number; g: number; b: number } | null => {
+  const normalized = hex.replace("#", "");
+  if (!/^[0-9a-fA-F]{6}$/.test(normalized)) return null;
+  return {
+    r: parseInt(normalized.slice(0, 2), 16),
+    g: parseInt(normalized.slice(2, 4), 16),
+    b: parseInt(normalized.slice(4, 6), 16),
+  };
+};
+
+const adjustHexColor = (hex: string, amount: number): string => {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return hex;
+
+  const r = clampByte(rgb.r + amount).toString(16).padStart(2, "0");
+  const g = clampByte(rgb.g + amount).toString(16).padStart(2, "0");
+  const b = clampByte(rgb.b + amount).toString(16).padStart(2, "0");
+  return `#${r}${g}${b}`.toUpperCase();
+};
+
+const colorWithAlpha = (hex: string, alpha: number): string => {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return `rgba(0, 0, 0, ${alpha})`;
+  return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`;
+};
+
+const getBoardThemeByColor = (
+  color: string
+): { canvasBackground: string; headerBackground: string } => {
+  if (color.toUpperCase() === "#6A359C") {
+    return {
+      canvasBackground:
+        "linear-gradient(135deg, #eef2ff 0%, #faf5ff 50%, #fdf2f8 100%)",
+      headerBackground:
+        "linear-gradient(90deg, #7e22ce 0%, #4338ca 50%, #6b21a8 100%)",
+    };
+  }
+
+  const lighter = adjustHexColor(color, 38);
+  const darker = adjustHexColor(color, -46);
+  const deeper = adjustHexColor(color, -76);
+
+  return {
+    canvasBackground: `radial-gradient(circle at 14% 18%, ${colorWithAlpha(
+      lighter,
+      0.34
+    )}, transparent 44%), radial-gradient(circle at 86% 84%, ${colorWithAlpha(
+      deeper,
+      0.2
+    )}, transparent 52%), linear-gradient(140deg, ${lighter} 0%, ${color} 48%, ${darker} 100%)`,
+    headerBackground: `linear-gradient(90deg, ${darker} 0%, ${color} 55%, ${deeper} 100%)`,
+  };
+};
+
 const getRoleNameLabel = (roleId: number | null | undefined): string =>
   roleId != null ? ROLE_NAME_BY_ID[roleId] || `role ${roleId}` : "unknown";
 
@@ -75,6 +187,18 @@ type MemberDirectoryApiUser = {
   boardLists?: MemberDirectoryList[] | null;
 };
 
+type CardActionMenuState = {
+  card: Card;
+  x: number;
+  y: number;
+};
+
+type CommissionTargetList = {
+  id: number;
+  title: string;
+  position?: number;
+};
+
 /* ================= MAIN COMPONENT ================= */
 export default function BoardView() {
   const { boardId } = useParams<{ boardId: string }>();
@@ -89,22 +213,34 @@ export default function BoardView() {
 
   const [isAddListOpen, setIsAddListOpen] = useState(false);
   const [newListTitle, setNewListTitle] = useState("");
-  const [newListCategory, setNewListCategory] = useState<0 | 1 | 2 | 3>(3);
+  const [newListCategory, setNewListCategory] = useState<0 | 1 | 2 | 3 | 4>(3);
 
   const [activeCardListId, setActiveCardListId] = useState<number | null>(null);
   const [newCardInvoice, setNewCardInvoice] = useState("");
   const [newCardFirstName, setNewCardFirstName] = useState("");
   const [newCardLastName, setNewCardLastName] = useState("");
+  const [creatingCardListId, setCreatingCardListId] = useState<number | null>(null);
   const [editingListId, setEditingListId] = useState<number | null>(null);
   const [editedListTitle, setEditedListTitle] = useState("");
   const [savingListId, setSavingListId] = useState<number | null>(null);
   const [deletingListId, setDeletingListId] = useState<number | null>(null);
+  const [openListActionMenuId, setOpenListActionMenuId] = useState<number | null>(null);
+  const [processingCardActionId, setProcessingCardActionId] = useState<number | null>(null);
+  const [cardActionMenu, setCardActionMenu] = useState<CardActionMenuState | null>(null);
+  const [commissionTargetLists, setCommissionTargetLists] = useState<CommissionTargetList[]>([]);
+  const [commissionTargetBoardName, setCommissionTargetBoardName] = useState("Commission Board");
+  const [loadingCommissionTargets, setLoadingCommissionTargets] = useState(false);
+  const [commissionTargetsError, setCommissionTargetsError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [moveBlockedMessage, setMoveBlockedMessage] = useState<string | null>(null);
   const [showFilterMenu, setShowFilterMenu] = useState(false);
+  const [showThemeMenu, setShowThemeMenu] = useState(false);
   const [showArchivedModal, setShowArchivedModal] = useState(false);
   const [showActivityModal, setShowActivityModal] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [boardBackgroundColor, setBoardBackgroundColor] = useState<BoardBackgroundColor>(
+    DEFAULT_BOARD_BACKGROUND_COLOR
+  );
   const [activityTab, setActivityTab] = useState<"all" | "comment">("all");
   const [boardActivities, setBoardActivities] = useState<BoardActivity[]>([]);
   const [loadingBoardActivities, setLoadingBoardActivities] = useState(false);
@@ -139,8 +275,10 @@ export default function BoardView() {
   const [serviceAreaMap, setServiceAreaMap] = useState<Record<number, string>>({});
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const filterSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const themeMenuRef = useRef<HTMLDivElement | null>(null);
   const filterMenuRef = useRef<HTMLDivElement | null>(null);
   const userMenuRef = useRef<HTMLDivElement | null>(null);
+  const cardActionMenuRef = useRef<HTMLDivElement | null>(null);
   const boardScrollRef = useRef<HTMLDivElement | null>(null);
   const boardPanStartRef = useRef<{
     x: number;
@@ -164,6 +302,14 @@ export default function BoardView() {
     archivedSelectedMemberFilterId !== "" ||
     archivedDueDateFilter !== "all";
   const shouldShowArchivedMatchCounts = archivedSearchTerm.trim().length > 0 || hasArchivedFilters;
+  const isCommissionBoard = useMemo(() => {
+    const normalizedName = (board?.name || "").trim().toLowerCase();
+    return normalizedName.includes("commission") || normalizedName.includes("comission");
+  }, [board?.name]);
+  const boardTheme = useMemo(
+    () => getBoardThemeByColor(boardBackgroundColor),
+    [boardBackgroundColor]
+  );
 
   const toggleFilterSelection = (
     id: number,
@@ -202,8 +348,12 @@ export default function BoardView() {
       });
 
       setBoard(data);
-    } catch (err) {
+    } catch (err: any) {
       console.error("Fetch board failed", err);
+      if (err?.response?.status === 403) {
+        alert("You are not allowed to access this board.");
+        navigate("/choose-dashboard");
+      }
     }
   };
 
@@ -548,6 +698,10 @@ export default function BoardView() {
   }, [boardId]);
 
   useEffect(() => {
+    setNewListCategory(isCommissionBoard ? 4 : 3);
+  }, [isCommissionBoard]);
+
+  useEffect(() => {
     const focusFilterSearch = () => {
       window.setTimeout(() => {
         filterSearchInputRef.current?.focus();
@@ -592,8 +746,23 @@ export default function BoardView() {
         return;
       }
 
+      if (event.key === "Escape" && showThemeMenu) {
+        setShowThemeMenu(false);
+        return;
+      }
+
       if (event.key === "Escape" && showUserMenu) {
         setShowUserMenu(false);
+        return;
+      }
+
+      if (event.key === "Escape" && openListActionMenuId !== null) {
+        setOpenListActionMenuId(null);
+        return;
+      }
+
+      if (event.key === "Escape" && cardActionMenu) {
+        setCardActionMenu(null);
         return;
       }
 
@@ -623,7 +792,28 @@ export default function BoardView() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [showActivityModal, showFilterMenu, showUserMenu]);
+  }, [
+    showActivityModal,
+    showFilterMenu,
+    showThemeMenu,
+    showUserMenu,
+    openListActionMenuId,
+    cardActionMenu,
+  ]);
+
+  useEffect(() => {
+    if (!showThemeMenu) return;
+
+    const handleOutsideClick = (event: globalThis.MouseEvent) => {
+      if (!themeMenuRef.current) return;
+      if (!themeMenuRef.current.contains(event.target as Node)) {
+        setShowThemeMenu(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleOutsideClick);
+    return () => document.removeEventListener("mousedown", handleOutsideClick);
+  }, [showThemeMenu]);
 
   useEffect(() => {
     if (!showFilterMenu) return;
@@ -646,6 +836,25 @@ export default function BoardView() {
   }, [showFilterMenu]);
 
   useEffect(() => {
+    if (!boardId) return;
+    const storageKey = `${BOARD_BACKGROUND_STORAGE_PREFIX}-${boardId}`;
+    const savedColor = localStorage.getItem(storageKey);
+    if (savedColor && BOARD_BACKGROUND_COLORS.includes(savedColor)) {
+      setBoardBackgroundColor(savedColor);
+      return;
+    }
+    setBoardBackgroundColor(DEFAULT_BOARD_BACKGROUND_COLOR);
+  }, [boardId]);
+
+  useEffect(() => {
+    if (!boardId) return;
+    localStorage.setItem(
+      `${BOARD_BACKGROUND_STORAGE_PREFIX}-${boardId}`,
+      boardBackgroundColor
+    );
+  }, [boardBackgroundColor, boardId]);
+
+  useEffect(() => {
     if (!showUserMenu) return;
 
     const handleOutsideClick = (event: globalThis.MouseEvent) => {
@@ -658,6 +867,40 @@ export default function BoardView() {
     document.addEventListener("mousedown", handleOutsideClick);
     return () => document.removeEventListener("mousedown", handleOutsideClick);
   }, [showUserMenu]);
+
+  useEffect(() => {
+    if (openListActionMenuId === null) return;
+
+    const handleOutsideClick = (event: globalThis.MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) {
+        setOpenListActionMenuId(null);
+        return;
+      }
+
+      const selector = `[data-list-actions-menu-id="${openListActionMenuId}"]`;
+      if (!target.closest(selector)) {
+        setOpenListActionMenuId(null);
+      }
+    };
+
+    document.addEventListener("mousedown", handleOutsideClick);
+    return () => document.removeEventListener("mousedown", handleOutsideClick);
+  }, [openListActionMenuId]);
+
+  useEffect(() => {
+    if (!cardActionMenu) return;
+
+    const handleOutsideClick = (event: globalThis.MouseEvent) => {
+      if (!cardActionMenuRef.current) return;
+      if (!cardActionMenuRef.current.contains(event.target as Node)) {
+        setCardActionMenu(null);
+      }
+    };
+
+    document.addEventListener("mousedown", handleOutsideClick);
+    return () => document.removeEventListener("mousedown", handleOutsideClick);
+  }, [cardActionMenu]);
 
   useEffect(() => {
     if (!showActivityModal) return;
@@ -809,6 +1052,178 @@ export default function BoardView() {
     ));
   };
 
+  const getLabelChangeLineTone = (line: string) => {
+    const normalized = line.trim().toLowerCase();
+    if (normalized.startsWith("country:")) {
+      return {
+        label: "Country",
+        badgeClass:
+          "inline-flex items-center rounded-full border border-[#8f53c6] bg-[#8f53c6] px-2 py-0.5 text-xs font-semibold text-white",
+        valueClass: "text-[#5f3a8c]",
+      };
+    }
+    if (normalized.startsWith("intake:")) {
+      return {
+        label: "Intake",
+        badgeClass:
+          "inline-flex items-center rounded-full border border-[#f2b205] bg-[#f2b205] px-2 py-0.5 text-xs font-semibold text-[#4a2b00]",
+        valueClass: "text-[#7a4a00]",
+      };
+    }
+    if (normalized.startsWith("service area:")) {
+      return {
+        label: "Service Area",
+        badgeClass:
+          "inline-flex items-center rounded-full border border-[#d63a3a] bg-[#d63a3a] px-2 py-0.5 text-xs font-semibold text-white",
+        valueClass: "text-[#8f2a2a]",
+      };
+    }
+    return null;
+  };
+
+  const isLabelChangeActivity = (action?: string, details?: string) => {
+    if ((action || "").toLowerCase().includes("label")) return true;
+    if (!details) return false;
+
+    return details
+      .split(/\r?\n/)
+      .some((line) => !!getLabelChangeLineTone(line));
+  };
+
+  const renderLabelChangeDetails = (details?: string) => {
+    if (!details) return null;
+
+    const lines = details
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+
+    if (lines.length === 0) return null;
+
+    return (
+      <div className="space-y-1.5">
+        {lines.map((line, lineIndex) => {
+          const tone = getLabelChangeLineTone(line);
+          if (!tone) {
+            return (
+              <div key={`label-change-plain-${lineIndex}`} className="text-sm text-gray-700">
+                {renderTextWithLinks(line)}
+              </div>
+            );
+          }
+
+          const separatorIndex = line.indexOf(":");
+          const value = separatorIndex >= 0 ? line.slice(separatorIndex + 1).trim() : line;
+
+          return (
+            <div key={`label-change-row-${lineIndex}`} className="flex flex-wrap items-start gap-2">
+              <span className={tone.badgeClass}>{tone.label}</span>
+              <span className={`min-w-0 text-sm ${tone.valueClass}`}>
+                {renderTextWithLinks(value || "None")}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  const parseDescriptionChangeDetails = (
+    details?: string
+  ): { before: string; after: string } | null => {
+    if (!details) return null;
+
+    const lines = details.split(/\r?\n/);
+    const descriptionLine = lines.find((line) => line.trim().toLowerCase().startsWith("description:"));
+    if (!descriptionLine) return null;
+
+    const payload = descriptionLine.trim().slice("Description:".length).trim();
+    const separator = '" -> "';
+    if (!payload.startsWith('"') || !payload.endsWith('"') || !payload.includes(separator)) {
+      return null;
+    }
+
+    const separatorIndex = payload.indexOf(separator);
+    if (separatorIndex <= 0) return null;
+
+    const before = payload.slice(1, separatorIndex);
+    const after = payload.slice(separatorIndex + separator.length, payload.length - 1);
+
+    return {
+      before: before.trim() || "[empty]",
+      after: after.trim() || "[empty]",
+    };
+  };
+
+  const computeInlineDiff = (before: string, after: string) => {
+    let start = 0;
+    const maxPrefix = Math.min(before.length, after.length);
+    while (start < maxPrefix && before[start] === after[start]) {
+      start += 1;
+    }
+
+    let beforeEnd = before.length - 1;
+    let afterEnd = after.length - 1;
+    while (beforeEnd >= start && afterEnd >= start && before[beforeEnd] === after[afterEnd]) {
+      beforeEnd -= 1;
+      afterEnd -= 1;
+    }
+
+    return {
+      prefix: before.slice(0, start),
+      beforeChanged: before.slice(start, beforeEnd + 1),
+      afterChanged: after.slice(start, afterEnd + 1),
+      suffix: before.slice(beforeEnd + 1),
+    };
+  };
+
+  const renderDescriptionDiffText = (
+    prefix: string,
+    changed: string,
+    suffix: string,
+    highlightClass: string
+  ) => (
+    <>
+      {prefix}
+      {changed ? <mark className={`rounded px-0.5 ${highlightClass}`}>{changed}</mark> : null}
+      {suffix}
+    </>
+  );
+
+  const renderDescriptionChangeDetails = (details?: string) => {
+    const parsed = parseDescriptionChangeDetails(details);
+    if (!parsed) return null;
+
+    const diff = computeInlineDiff(parsed.before, parsed.after);
+
+    return (
+      <div className="space-y-2">
+        <div className="rounded-md border border-rose-200 bg-rose-50 p-2.5">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-rose-700">Before</p>
+          <p className="mt-1 whitespace-pre-wrap break-words text-sm text-rose-900">
+            {renderDescriptionDiffText(
+              diff.prefix,
+              diff.beforeChanged,
+              diff.suffix,
+              "bg-rose-200/80 text-rose-900"
+            )}
+          </p>
+        </div>
+        <div className="rounded-md border border-emerald-200 bg-emerald-50 p-2.5">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">After</p>
+          <p className="mt-1 whitespace-pre-wrap break-words text-sm text-emerald-900">
+            {renderDescriptionDiffText(
+              diff.prefix,
+              diff.afterChanged,
+              diff.suffix,
+              "bg-emerald-200/90 text-emerald-900"
+            )}
+          </p>
+        </div>
+      </div>
+    );
+  };
+
   const handleOpenBoardActivityAttachment = async (activity: BoardActivity) => {
     if (!activity.attachment_path && !activity.attachment_url) return;
 
@@ -856,12 +1271,13 @@ export default function BoardView() {
   const handleCreateList = async () => {
     if (!newListTitle.trim() || !board) return;
 
+    const listCategory: 0 | 1 | 2 | 3 | 4 = isCommissionBoard ? 4 : newListCategory;
     const position = board.lists.length + 1;
     const tempList: List = {
       id: Date.now(),
       board_id: board.id,
       title: newListTitle.trim(),
-      category: newListCategory,
+      category: listCategory,
       position,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -871,13 +1287,13 @@ export default function BoardView() {
     setBoard((prev) => (prev ? { ...prev, lists: [...prev.lists, tempList] } : null));
 
     setNewListTitle("");
-    setNewListCategory(3);
+    setNewListCategory(isCommissionBoard ? 4 : 3);
     setIsAddListOpen(false);
 
     try {
       const res = await api.post(`/boards/${board.id}/lists`, {
         title: tempList.title,
-        category: tempList.category ?? 0,
+        category: tempList.category ?? (isCommissionBoard ? 4 : 0),
         position,
       });
       const newListId = res.data.id; // Assume backend returns the created list
@@ -892,6 +1308,7 @@ export default function BoardView() {
   const canEditListTitle = Number(profile?.role_id) === 1;
   const canMoveLists = Number(profile?.role_id) === 1;
   const canDeleteLists = Number(profile?.role_id) === 1;
+  const canManageCardQuickActions = Number(profile?.role_id) === 1;
 
   const startEditListTitle = (list: List) => {
     if (!canEditListTitle || savingListId !== null) return;
@@ -938,6 +1355,7 @@ export default function BoardView() {
   const handleDeleteList = async (list: List) => {
     if (!board || !canDeleteLists) return;
 
+    setOpenListActionMenuId(null);
     const confirmed = window.confirm(
       `Delete list "${list.title}" and all its cards? This cannot be undone.`
     );
@@ -973,6 +1391,10 @@ export default function BoardView() {
   };
 
   const handleCreateCard = async (listId: number) => {
+    if (creatingCardListId !== null) {
+      return;
+    }
+
     if (!newCardInvoice.trim()) {
       alert("Invoice is required.");
       return;
@@ -984,6 +1406,7 @@ export default function BoardView() {
       last_name: newCardLastName.trim() || undefined,
     };
 
+    setCreatingCardListId(listId);
     try {
       const res = await api.post(`/board-lists/${listId}/cards`, payload);
       const newCardId = res.data.id; // Assume backend returns the created card
@@ -997,10 +1420,85 @@ export default function BoardView() {
       setNewCardLastName("");
       setActiveCardListId(null);
       await fetchBoard();
-    } catch (err) {
+    } catch (err: any) {
       console.error("Create card failed", err);
-      alert("Could not create card. Please check invoice uniqueness.");
+      const apiMessage =
+        err?.response?.data?.errors?.invoice?.[0] ||
+        err?.response?.data?.message ||
+        (err?.response?.status === 403
+          ? "You do not have permission to create cards in this list."
+          : null);
+      alert(apiMessage || "Could not create card. Please try again.");
+    } finally {
+      setCreatingCardListId(null);
     }
+  };
+
+  const getCardDisplayTitle = (card: Card) =>
+    `${card.invoice || `ID-${card.id}`} ${card.first_name || ""} ${card.last_name || ""}`.trim();
+
+  const fetchCommissionTargets = async (card: Card) => {
+    setLoadingCommissionTargets(true);
+    setCommissionTargetsError(null);
+    setCommissionTargetLists([]);
+    setCommissionTargetBoardName("Commission Board");
+
+    try {
+      const res = await api.get(`/cards/${card.id}/commission-targets`);
+      const payload = res.data ?? {};
+      const lists = Array.isArray(payload?.lists) ? payload.lists : [];
+      const normalizedLists = lists
+        .map((list: any) => ({
+          id: Number(list?.id),
+          title: String(list?.title ?? "").trim(),
+          position: list?.position != null ? Number(list.position) : undefined,
+        }))
+        .filter((list: CommissionTargetList) => Number.isFinite(list.id) && list.title.length > 0);
+
+      setCommissionTargetBoardName(
+        typeof payload?.board?.name === "string" && payload.board.name.trim().length > 0
+          ? payload.board.name
+          : "Commission Board"
+      );
+      setCommissionTargetLists(normalizedLists);
+    } catch (err: any) {
+      console.error("Fetch commission targets failed", err);
+      setCommissionTargetsError(err?.response?.data?.message || "Could not load commission board lists.");
+    } finally {
+      setLoadingCommissionTargets(false);
+    }
+  };
+
+  const handleOpenCardActions = (card: Card, position: { x: number; y: number }) => {
+    if (!canManageCardQuickActions || processingCardActionId !== null) return;
+    setCardActionMenu({ card, x: position.x, y: position.y });
+    void fetchCommissionTargets(card);
+  };
+
+  const handleMoveCardToCommissionBoard = async (card: Card, toListId?: number) => {
+    if (processingCardActionId !== null) return;
+
+    setCardActionMenu(null);
+    setProcessingCardActionId(card.id);
+    try {
+      await api.put(`/cards/${card.id}/move-to-commission`, {
+        to_list_id: toListId,
+      });
+      if (selectedCard?.id === card.id) {
+        setSelectedCard(null);
+      }
+      await fetchBoard();
+    } catch (err: any) {
+      console.error("Move card to Commission Board failed", err);
+      alert(err?.response?.data?.message || "Could not move card to Commission Board.");
+    } finally {
+      setProcessingCardActionId(null);
+    }
+  };
+
+  const handleMoveCardToCommissionTargetList = async (targetListId: number) => {
+    if (!cardActionMenu) return;
+    await handleMoveCardToCommissionBoard(cardActionMenu.card, targetListId);
   };
 
   const cancelAddCard = () => {
@@ -1473,13 +1971,21 @@ export default function BoardView() {
     }
   }, [memberFilterOptions, archivedSelectedMemberFilterId]);
 
-  const { laterIntakeLists, admissionLists, visaLists, dependantVisaLists, totalMatchedCards } = useMemo(() => {
+  const {
+    laterIntakeLists,
+    admissionLists,
+    visaLists,
+    dependantVisaLists,
+    commissionBoardLists,
+    totalMatchedCards,
+  } = useMemo(() => {
     if (!board) {
       return {
         laterIntakeLists: [] as ListWithSearchMeta[],
         admissionLists: [] as ListWithSearchMeta[],
         visaLists: [] as ListWithSearchMeta[],
         dependantVisaLists: [] as ListWithSearchMeta[],
+        commissionBoardLists: [] as ListWithSearchMeta[],
         totalMatchedCards: 0,
       };
     }
@@ -1696,11 +2202,27 @@ export default function BoardView() {
     const dependantVisaSource = board.lists
       .filter((list) => list.category === 2)
       .sort((a, b) => a.position - b.position);
+    const commissionBoardSource = board.lists
+      .filter((list) => list.category === 4)
+      .sort((a, b) => a.position - b.position);
 
     const filteredLaterIntake = filterLists(laterIntakeSource);
     const filteredAdmission = filterLists(admissionSource);
     const filteredVisa = filterLists(visaSource);
     const filteredDependantVisa = filterLists(dependantVisaSource);
+    const filteredCommissionBoard = filterLists(commissionBoardSource);
+
+    if (isCommissionBoard) {
+      return {
+        laterIntakeLists: [] as ListWithSearchMeta[],
+        admissionLists: [] as ListWithSearchMeta[],
+        visaLists: [] as ListWithSearchMeta[],
+        dependantVisaLists: [] as ListWithSearchMeta[],
+        commissionBoardLists: filteredCommissionBoard,
+        totalMatchedCards: filteredCommissionBoard.reduce((sum, list) => sum + list.cards.length, 0),
+      };
+    }
+
     const allFiltered = [
       ...filteredLaterIntake,
       ...filteredAdmission,
@@ -1713,10 +2235,12 @@ export default function BoardView() {
       admissionLists: filteredAdmission,
       visaLists: filteredVisa,
       dependantVisaLists: filteredDependantVisa,
+      commissionBoardLists: [] as ListWithSearchMeta[],
       totalMatchedCards: allFiltered.reduce((sum, list) => sum + list.cards.length, 0),
     };
   }, [
     board,
+    isCommissionBoard,
     deferredSearchTerm,
     isSearching,
     hasActiveFilters,
@@ -1733,6 +2257,16 @@ export default function BoardView() {
 
   const addCardAllowedListIds = useMemo(() => {
     if (!board || board.lists.length === 0) return new Set<number>();
+
+    if (isCommissionBoard) {
+      const firstCommissionBoardList = [...board.lists]
+        .filter((list) => list.category === 4)
+        .sort((a, b) => a.position - b.position)[0];
+
+      return new Set(
+        [firstCommissionBoardList?.id].filter((id): id is number => id != null)
+      );
+    }
 
     const firstLaterIntakeList = [...board.lists]
       .filter((list) => list.category === 3)
@@ -1755,7 +2289,7 @@ export default function BoardView() {
         firstDependantVisaList?.id,
       ].filter((id): id is number => id != null)
     );
-  }, [board]);
+  }, [board, isCommissionBoard]);
 
   if (loading) return <Loader message="Loading board..." />;
   if (!board) return null;
@@ -1818,16 +2352,38 @@ export default function BoardView() {
               </span>
             )}
             {canDeleteLists && (
-              <button
-                type="button"
-                onClick={() => void handleDeleteList(list)}
-                disabled={deletingListId === list.id}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-red-200 text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
-                title="Delete list"
-                aria-label={`Delete ${list.title}`}
-              >
-                <Trash2 size={15} />
-              </button>
+              <div className="relative" data-list-actions-menu-id={list.id}>
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setOpenListActionMenuId((prev) => (prev === list.id ? null : list.id));
+                  }}
+                  disabled={deletingListId === list.id}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  title="List actions"
+                  aria-label={`Actions for ${list.title}`}
+                >
+                  <MoreHorizontal size={15} />
+                </button>
+
+                {openListActionMenuId === list.id && (
+                  <div className="absolute right-0 top-full mt-1 z-20 w-40 rounded-md border border-gray-200 bg-white p-1.5 shadow-lg">
+                    <button
+                      type="button"
+                      onClick={() => void handleDeleteList(list)}
+                      disabled={deletingListId === list.id}
+                      className={`w-full rounded-md px-3 py-2 text-left text-sm transition ${
+                        deletingListId === list.id
+                          ? "text-gray-400 cursor-not-allowed"
+                          : "text-red-700 hover:bg-red-50"
+                      }`}
+                    >
+                      {deletingListId === list.id ? "Deleting..." : "Delete list"}
+                    </button>
+                  </div>
+                )}
+              </div>
             )}
           </div>
         </div>
@@ -1842,6 +2398,9 @@ export default function BoardView() {
                   onClick={() => setSelectedCard(card)}
                   labelBadges={getCardLabelBadges(card)}
                   dragDisabled={isSearching || hasActiveFilters}
+                  showActions={canManageCardQuickActions}
+                  disableActions={processingCardActionId === card.id}
+                  onOpenActions={handleOpenCardActions}
                 />
               ))}
             </div>
@@ -1857,6 +2416,7 @@ export default function BoardView() {
                 value={newCardInvoice}
                 onChange={(e) => setNewCardInvoice(e.target.value)}
                 placeholder="Invoice"
+                disabled={creatingCardListId === list.id}
                 className="w-full border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-400 outline-none mb-3"
               />
 
@@ -1865,12 +2425,14 @@ export default function BoardView() {
                   value={newCardFirstName}
                   onChange={(e) => setNewCardFirstName(e.target.value)}
                   placeholder="First name"
+                  disabled={creatingCardListId === list.id}
                   className="w-full border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-400 outline-none"
                 />
                 <input
                   value={newCardLastName}
                   onChange={(e) => setNewCardLastName(e.target.value)}
                   placeholder="Last name"
+                  disabled={creatingCardListId === list.id}
                   className="w-full border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-400 outline-none"
                 />
               </div>
@@ -1878,13 +2440,23 @@ export default function BoardView() {
               <div className="flex gap-3 mt-4">
                 <button
                   onClick={() => handleCreateCard(list.id)}
-                  className="flex-1 bg-indigo-600 text-white py-2 rounded-md text-sm font-medium"
+                  disabled={creatingCardListId === list.id}
+                  className={`flex-1 py-2 rounded-md text-sm font-medium ${
+                    creatingCardListId === list.id
+                      ? "bg-indigo-400 text-white cursor-not-allowed"
+                      : "bg-indigo-600 text-white"
+                  }`}
                 >
-                  Add card
+                  {creatingCardListId === list.id ? "Adding..." : "Add card"}
                 </button>
                 <button
                   onClick={cancelAddCard}
-                  className="flex-1 bg-gray-200 text-gray-800 py-2 rounded-md text-sm font-medium hover:bg-gray-300"
+                  disabled={creatingCardListId === list.id}
+                  className={`flex-1 py-2 rounded-md text-sm font-medium ${
+                    creatingCardListId === list.id
+                      ? "bg-gray-100 text-gray-400 cursor-not-allowed"
+                      : "bg-gray-200 text-gray-800 hover:bg-gray-300"
+                  }`}
                 >
                   Cancel
                 </button>
@@ -1893,6 +2465,7 @@ export default function BoardView() {
           ) : (
             <button
               onClick={() => setActiveCardListId(list.id)}
+              disabled={creatingCardListId !== null}
               className="w-full flex items-center gap-2 text-gray-600 hover:bg-gray-100 rounded-lg px-2 py-2 text-sm"
             >
               <Plus size={16} /> Add a card
@@ -1910,12 +2483,30 @@ export default function BoardView() {
 
   const activeDraggedList =
     activeListId != null ? board.lists.find((list) => list.id === activeListId) || null : null;
+  const cardActionMenuLeft = cardActionMenu
+    ? Math.max(
+        12,
+        Math.min(
+          cardActionMenu.x,
+          (typeof window !== "undefined" ? window.innerWidth : cardActionMenu.x) - 320
+        )
+      )
+    : 12;
+  const cardActionMenuTop = cardActionMenu
+    ? Math.max(
+        12,
+        Math.min(
+          cardActionMenu.y,
+          (typeof window !== "undefined" ? window.innerHeight : cardActionMenu.y) - 420
+        )
+      )
+    : 12;
 
   const renderListDragOverlay = (list: List) => {
     const previewCards = list.cards.slice(0, 3);
 
     return (
-      <div className="w-80 rounded-xl border border-gray-200 bg-white/95 backdrop-blur-sm shadow-2xl rotate-[1.2deg]">
+      <div className="w-[22rem] rounded-xl border border-gray-200 bg-white/95 backdrop-blur-sm shadow-2xl rotate-[1.2deg]">
         <div className="p-4 pb-2">
           <h3 className="font-semibold text-lg text-gray-900 truncate">{list.title}</h3>
 
@@ -2063,6 +2654,63 @@ export default function BoardView() {
         </div>
 
         <div className="flex items-center gap-3">
+          <div className="relative" ref={themeMenuRef}>
+            <button
+              type="button"
+              onClick={() => setShowThemeMenu((prev) => !prev)}
+              className={`flex items-center gap-2 px-3 py-1.5 border rounded-lg text-sm font-medium transition ${
+                showThemeMenu
+                  ? "bg-indigo-50 border-indigo-300 text-indigo-700"
+                  : "bg-white border-gray-300 text-gray-700 hover:bg-gray-50"
+              }`}
+            >
+              <span>Theme</span>
+              <span
+                className="h-4 w-4 rounded-full border border-gray-300"
+                style={{ backgroundColor: boardBackgroundColor }}
+                aria-hidden="true"
+              />
+              <ChevronDown
+                size={14}
+                className={`transition-transform ${showThemeMenu ? "rotate-180" : ""}`}
+              />
+            </button>
+
+            {showThemeMenu && (
+              <div className="absolute right-0 mt-2 w-[22rem] rounded-xl border border-gray-200 bg-white shadow-xl p-3 z-50">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs font-semibold text-gray-700">Choose Theme Color</p>
+                  <span className="text-[11px] text-gray-500">
+                    {BOARD_BACKGROUND_COLORS.length} options
+                  </span>
+                </div>
+                <div className="grid grid-cols-10 gap-2 max-h-44 overflow-y-auto pr-1">
+                  {BOARD_BACKGROUND_COLORS.map((color) => {
+                    const isActive = boardBackgroundColor === color;
+                    return (
+                      <button
+                        key={color}
+                        type="button"
+                        onClick={() => {
+                          setBoardBackgroundColor(color);
+                          setShowThemeMenu(false);
+                        }}
+                        className={`h-6 w-6 rounded-full border transition ${
+                          isActive
+                            ? "border-gray-900 ring-2 ring-gray-400 ring-offset-1"
+                            : "border-gray-200 hover:scale-105 hover:border-gray-500"
+                        }`}
+                        style={{ backgroundColor: color }}
+                        title={color}
+                        aria-label={`Set theme color ${color}`}
+                      />
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
           <div className="relative" ref={filterMenuRef}>
             <button
               type="button"
@@ -2305,7 +2953,10 @@ export default function BoardView() {
           </button>
 
           <button
-            onClick={() => setIsAddListOpen(true)}
+            onClick={() => {
+              setNewListCategory(isCommissionBoard ? 4 : 3);
+              setIsAddListOpen(true);
+            }}
             className="flex items-center gap-1.5 px-4 py-1.5 bg-gradient-to-r from-indigo-600 to-blue-600 text-white text-sm rounded-lg shadow-md"
           >
             <Plus size={16} /> New List
@@ -2351,8 +3002,17 @@ export default function BoardView() {
       </header>
 
       {/* BOARD */}
-      <main className="flex-1 flex flex-col overflow-hidden bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 rounded-xl shadow-inner m-4">
-        <div className="h-16 bg-gradient-to-r from-purple-700 via-indigo-700 to-purple-800 text-white flex items-center justify-between px-6 rounded-t-xl">
+      <main
+        className="flex-1 flex flex-col overflow-hidden rounded-xl shadow-inner m-4 transition-all duration-200"
+        style={{
+          backgroundColor: boardBackgroundColor,
+          backgroundImage: boardTheme.canvasBackground,
+        }}
+      >
+        <div
+          className="h-12 text-white flex items-center justify-between px-6 rounded-t-xl border-b border-white/15"
+          style={{ backgroundImage: boardTheme.headerBackground }}
+        >
           <div className="flex items-center gap-4">
             <LayoutGrid size={20} />
             <h1 className="text-xl font-bold">{board.name}</h1>
@@ -2373,160 +3033,201 @@ export default function BoardView() {
             className="flex-1 min-h-0 overflow-x-auto overflow-y-auto"
           >
             <div className="min-h-full p-6 flex gap-6 min-w-max">
-              <div className="min-h-0 flex gap-6">
-                <div className="min-w-[320px] flex flex-col gap-3">
-                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-sky-100 text-sky-800 text-xs font-semibold uppercase tracking-wide">
-                    Later Intake
-                  </div>
-                  <div className="flex-1">
-                    <SortableContext
-                      items={laterIntakeLists.map((list) => `list-${list.id}`)}
-                      strategy={horizontalListSortingStrategy}
-                    >
-                      <div className="flex gap-6 min-w-max items-start pb-2 pr-0">
-                        {laterIntakeLists.length > 0 ? (
-                          laterIntakeLists.map((list) =>
-                            renderListColumn(list, addCardAllowedListIds.has(list.id))
-                          )
-                        ) : (
-                          <div className="w-80 h-28 rounded-xl border border-dashed border-sky-300 bg-sky-50/50 text-sky-800 text-sm flex items-center justify-center">
-                            {isSearching || hasActiveFilters ? "No matching cards in later intake" : "No later intake lists"}
-                          </div>
-                        )}
-                      </div>
-                    </SortableContext>
-                  </div>
-                </div>
-
-                <div className="self-stretch border-l-2 border-dotted border-indigo-300/70" />
-
-                <div className="min-w-[320px] flex flex-col gap-3">
-                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-semibold uppercase tracking-wide">
-                    Admission
-                  </div>
-                  <div className="flex-1">
-                    <SortableContext
-                      items={admissionLists.map((list) => `list-${list.id}`)}
-                      strategy={horizontalListSortingStrategy}
-                    >
-                      <div className="flex gap-6 min-w-max items-start pb-2 pr-0">
-                        {admissionLists.length > 0 ? (
-                          admissionLists.map((list) =>
-                            renderListColumn(list, addCardAllowedListIds.has(list.id))
-                          )
-                        ) : (
-                          <div className="w-80 h-28 rounded-xl border border-dashed border-emerald-300 bg-emerald-50/50 text-emerald-800 text-sm flex items-center justify-center">
-                            {isSearching || hasActiveFilters ? "No matching cards in admission" : "No admission lists"}
-                          </div>
-                        )}
-                      </div>
-                    </SortableContext>
+              {isCommissionBoard ? (
+                <div className="min-h-0 flex gap-6">
+                  <div className="min-w-[320px] flex flex-col gap-3">
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-100 text-indigo-800 text-xs font-semibold uppercase tracking-wide">
+                      Commission Board Category
+                    </div>
+                    <div className="flex-1">
+                      <SortableContext
+                        items={commissionBoardLists.map((list) => `list-${list.id}`)}
+                        strategy={horizontalListSortingStrategy}
+                      >
+                        <div className="flex gap-6 min-w-max items-start pb-2 pr-0">
+                          {commissionBoardLists.length > 0 ? (
+                            commissionBoardLists.map((list) =>
+                              renderListColumn(list, addCardAllowedListIds.has(list.id))
+                            )
+                          ) : (
+                            <div className="w-[22rem] h-28 rounded-xl border border-dashed border-indigo-300 bg-indigo-50/50 text-indigo-800 text-sm flex items-center justify-center">
+                              {isSearching || hasActiveFilters
+                                ? "No matching cards in commission board"
+                                : "No commission board lists"}
+                            </div>
+                          )}
+                        </div>
+                      </SortableContext>
+                    </div>
                   </div>
                 </div>
-
-                <div className="self-stretch border-l-2 border-dotted border-indigo-300/70" />
-
-                <div className="min-w-[320px] flex flex-col gap-3">
-                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-100 text-amber-800 text-xs font-semibold uppercase tracking-wide">
-                    Visa
+              ) : (
+                <div className="min-h-0 flex gap-6">
+                  <div className="min-w-[320px] flex flex-col gap-3">
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-sky-100 text-sky-800 text-xs font-semibold uppercase tracking-wide">
+                      Later Intake
+                    </div>
+                    <div className="flex-1">
+                      <SortableContext
+                        items={laterIntakeLists.map((list) => `list-${list.id}`)}
+                        strategy={horizontalListSortingStrategy}
+                      >
+                        <div className="flex gap-6 min-w-max items-start pb-2 pr-0">
+                          {laterIntakeLists.length > 0 ? (
+                            laterIntakeLists.map((list) =>
+                              renderListColumn(list, addCardAllowedListIds.has(list.id))
+                            )
+                          ) : (
+                            <div className="w-[22rem] h-28 rounded-xl border border-dashed border-sky-300 bg-sky-50/50 text-sky-800 text-sm flex items-center justify-center">
+                              {isSearching || hasActiveFilters ? "No matching cards in later intake" : "No later intake lists"}
+                            </div>
+                          )}
+                        </div>
+                      </SortableContext>
+                    </div>
                   </div>
-                  <div className="flex-1">
-                    <SortableContext
-                      items={visaLists.map((list) => `list-${list.id}`)}
-                      strategy={horizontalListSortingStrategy}
-                    >
-                      <div className="flex gap-6 min-w-max items-start pb-2 pr-0">
-                        {visaLists.length > 0 ? (
-                          visaLists.map((list) =>
-                            renderListColumn(list, addCardAllowedListIds.has(list.id))
-                          )
-                        ) : (
-                          <div className="w-80 h-28 rounded-xl border border-dashed border-amber-300 bg-amber-50/50 text-amber-800 text-sm flex items-center justify-center">
-                            {isSearching || hasActiveFilters ? "No matching cards in visa" : "No visa lists"}
-                          </div>
-                        )}
-                      </div>
-                    </SortableContext>
+
+                  <div className="self-stretch border-l-2 border-dotted border-indigo-300/70" />
+
+                  <div className="min-w-[320px] flex flex-col gap-3">
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-semibold uppercase tracking-wide">
+                      Admission
+                    </div>
+                    <div className="flex-1">
+                      <SortableContext
+                        items={admissionLists.map((list) => `list-${list.id}`)}
+                        strategy={horizontalListSortingStrategy}
+                      >
+                        <div className="flex gap-6 min-w-max items-start pb-2 pr-0">
+                          {admissionLists.length > 0 ? (
+                            admissionLists.map((list) =>
+                              renderListColumn(list, addCardAllowedListIds.has(list.id))
+                            )
+                          ) : (
+                            <div className="w-[22rem] h-28 rounded-xl border border-dashed border-emerald-300 bg-emerald-50/50 text-emerald-800 text-sm flex items-center justify-center">
+                              {isSearching || hasActiveFilters ? "No matching cards in admission" : "No admission lists"}
+                            </div>
+                          )}
+                        </div>
+                      </SortableContext>
+                    </div>
+                  </div>
+
+                  <div className="self-stretch border-l-2 border-dotted border-indigo-300/70" />
+
+                  <div className="min-w-[320px] flex flex-col gap-3">
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-100 text-amber-800 text-xs font-semibold uppercase tracking-wide">
+                      Visa
+                    </div>
+                    <div className="flex-1">
+                      <SortableContext
+                        items={visaLists.map((list) => `list-${list.id}`)}
+                        strategy={horizontalListSortingStrategy}
+                      >
+                        <div className="flex gap-6 min-w-max items-start pb-2 pr-0">
+                          {visaLists.length > 0 ? (
+                            visaLists.map((list) =>
+                              renderListColumn(list, addCardAllowedListIds.has(list.id))
+                            )
+                          ) : (
+                            <div className="w-[22rem] h-28 rounded-xl border border-dashed border-amber-300 bg-amber-50/50 text-amber-800 text-sm flex items-center justify-center">
+                              {isSearching || hasActiveFilters ? "No matching cards in visa" : "No visa lists"}
+                            </div>
+                          )}
+                        </div>
+                      </SortableContext>
+                    </div>
+                  </div>
+
+                  <div className="self-stretch border-l-2 border-dotted border-indigo-300/70" />
+
+                  <div className="min-w-[320px] flex flex-col gap-3">
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-rose-100 text-rose-800 text-xs font-semibold uppercase tracking-wide">
+                      Dependant Visa
+                    </div>
+                    <div className="flex-1">
+                      <SortableContext
+                        items={dependantVisaLists.map((list) => `list-${list.id}`)}
+                        strategy={horizontalListSortingStrategy}
+                      >
+                        <div className="flex gap-6 min-w-max items-start pb-2 pr-0">
+                          {dependantVisaLists.length > 0 ? (
+                            dependantVisaLists.map((list) =>
+                              renderListColumn(list, addCardAllowedListIds.has(list.id))
+                            )
+                          ) : (
+                            <div className="w-[22rem] h-28 rounded-xl border border-dashed border-rose-300 bg-rose-50/50 text-rose-800 text-sm flex items-center justify-center">
+                              {isSearching || hasActiveFilters ? "No matching cards in dependant visa" : "No dependant visa lists"}
+                            </div>
+                          )}
+                        </div>
+                      </SortableContext>
+                    </div>
                   </div>
                 </div>
-
-                <div className="self-stretch border-l-2 border-dotted border-indigo-300/70" />
-
-                <div className="min-w-[320px] flex flex-col gap-3">
-                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-rose-100 text-rose-800 text-xs font-semibold uppercase tracking-wide">
-                    Dependant Visa
-                  </div>
-                  <div className="flex-1">
-                    <SortableContext
-                      items={dependantVisaLists.map((list) => `list-${list.id}`)}
-                      strategy={horizontalListSortingStrategy}
-                    >
-                      <div className="flex gap-6 min-w-max items-start pb-2 pr-0">
-                        {dependantVisaLists.length > 0 ? (
-                          dependantVisaLists.map((list) =>
-                            renderListColumn(list, addCardAllowedListIds.has(list.id))
-                          )
-                        ) : (
-                          <div className="w-80 h-28 rounded-xl border border-dashed border-rose-300 bg-rose-50/50 text-rose-800 text-sm flex items-center justify-center">
-                            {isSearching || hasActiveFilters ? "No matching cards in dependant visa" : "No dependant visa lists"}
-                          </div>
-                        )}
-                      </div>
-                    </SortableContext>
-                  </div>
-                </div>
-              </div>
+              )}
 
               {/* ADD ANOTHER LIST (opened from header button) */}
               {isAddListOpen && (
-                <div className="w-80 shrink-0 self-start">
+                <div className="w-[22rem] shrink-0 self-start">
                   <div className="bg-white rounded-xl p-4 border shadow-md">
-                    <div className="grid grid-cols-2 gap-2 mb-3">
-                      <button
-                        type="button"
-                        onClick={() => setNewListCategory(3)}
-                        className={`h-9 rounded-md text-sm font-semibold border transition ${
-                          newListCategory === 3
-                            ? "bg-sky-600 text-white border-sky-600"
-                            : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
-                        }`}
-                      >
-                        Later Intake
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setNewListCategory(0)}
-                        className={`h-9 rounded-md text-sm font-semibold border transition ${
-                          newListCategory === 0
-                            ? "bg-emerald-600 text-white border-emerald-600"
-                            : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
-                        }`}
-                      >
-                        Admission
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setNewListCategory(1)}
-                        className={`h-9 rounded-md text-sm font-semibold border transition ${
-                          newListCategory === 1
-                            ? "bg-amber-600 text-white border-amber-600"
-                            : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
-                        }`}
-                      >
-                        Visa
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setNewListCategory(2)}
-                        className={`h-9 rounded-md text-sm font-semibold border transition ${
-                          newListCategory === 2
-                            ? "bg-rose-600 text-white border-rose-600"
-                            : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
-                        }`}
-                      >
-                        Dependant
-                      </button>
-                    </div>
+                    {isCommissionBoard ? (
+                      <div className="mb-3">
+                        <button
+                          type="button"
+                          className="h-9 w-full rounded-md text-sm font-semibold border bg-indigo-600 text-white border-indigo-600 cursor-default"
+                        >
+                          Commission Board
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-2 gap-2 mb-3">
+                        <button
+                          type="button"
+                          onClick={() => setNewListCategory(3)}
+                          className={`h-9 rounded-md text-sm font-semibold border transition ${
+                            newListCategory === 3
+                              ? "bg-sky-600 text-white border-sky-600"
+                              : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+                          }`}
+                        >
+                          Later Intake
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setNewListCategory(0)}
+                          className={`h-9 rounded-md text-sm font-semibold border transition ${
+                            newListCategory === 0
+                              ? "bg-emerald-600 text-white border-emerald-600"
+                              : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+                          }`}
+                        >
+                          Admission
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setNewListCategory(1)}
+                          className={`h-9 rounded-md text-sm font-semibold border transition ${
+                            newListCategory === 1
+                              ? "bg-amber-600 text-white border-amber-600"
+                              : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+                          }`}
+                        >
+                          Visa
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setNewListCategory(2)}
+                          className={`h-9 rounded-md text-sm font-semibold border transition ${
+                            newListCategory === 2
+                              ? "bg-rose-600 text-white border-rose-600"
+                              : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+                          }`}
+                        >
+                          Dependant
+                        </button>
+                      </div>
+                    )}
 
                     <input
                       autoFocus
@@ -2546,7 +3247,7 @@ export default function BoardView() {
                         onClick={() => {
                           setIsAddListOpen(false);
                           setNewListTitle("");
-                          setNewListCategory(3);
+                          setNewListCategory(isCommissionBoard ? 4 : 3);
                         }}
                         className="text-sm text-gray-600 hover:underline"
                       >
@@ -2561,7 +3262,7 @@ export default function BoardView() {
 
           <DragOverlay>
             {activeCard ? (
-              <div className="w-80 bg-white rounded-xl p-3 shadow-2xl border border-gray-200">
+              <div className="w-[22rem] bg-white rounded-xl p-3 shadow-2xl border border-gray-200">
                 <p className="text-sm font-bold text-indigo-700">
                   {activeCard.invoice || `ID-${activeCard.id}`} {activeCard.first_name || ""} {activeCard.last_name || ""}
                 </p>
@@ -2574,6 +3275,53 @@ export default function BoardView() {
             ) : null}
           </DragOverlay>
         </DndContext>
+
+        {cardActionMenu && (
+          <div className="fixed inset-0 z-[73] pointer-events-none">
+            <div
+              ref={cardActionMenuRef}
+              className="pointer-events-auto fixed w-[20rem] rounded-xl border border-gray-200 bg-white shadow-2xl overflow-hidden"
+              style={{ left: cardActionMenuLeft, top: cardActionMenuTop }}
+            >
+              <div className="px-3 py-2 border-b bg-gray-50">
+                <p className="text-xs font-semibold text-gray-800 truncate">
+                  {getCardDisplayTitle(cardActionMenu.card)}
+                </p>
+              </div>
+
+              <div className="px-3 py-2 bg-gray-50">
+                <p className="text-xs font-semibold text-gray-700">
+                  Move to {commissionTargetBoardName}
+                </p>
+              </div>
+              <div className="max-h-56 overflow-y-auto p-1.5">
+                {loadingCommissionTargets ? (
+                  <p className="px-3 py-2 text-xs text-gray-500">Loading lists...</p>
+                ) : commissionTargetsError ? (
+                  <p className="px-3 py-2 text-xs text-red-600">{commissionTargetsError}</p>
+                ) : commissionTargetLists.length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-gray-500">No Commission Board list found.</p>
+                ) : (
+                  commissionTargetLists.map((targetList) => (
+                    <button
+                      key={`commission-target-${targetList.id}`}
+                      type="button"
+                      onClick={() => void handleMoveCardToCommissionTargetList(targetList.id)}
+                      disabled={processingCardActionId === cardActionMenu.card.id}
+                      className={`w-full rounded-md px-3 py-2 text-sm text-left transition ${
+                        processingCardActionId === cardActionMenu.card.id
+                          ? "text-gray-400 cursor-not-allowed"
+                          : "text-indigo-700 hover:bg-indigo-50"
+                      }`}
+                    >
+                      {targetList.title}
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {selectedCard && (
           <CardDetailModal
@@ -2959,11 +3707,19 @@ export default function BoardView() {
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {boardActivities.map((activityItem) => (
-                      <div
-                        key={activityItem.id}
-                        className="rounded-xl border border-gray-200 bg-white p-4"
-                      >
+                    {boardActivities.map((activityItem) => {
+                      const hasLabelChangeDetails = isLabelChangeActivity(
+                        activityItem.action,
+                        activityItem.details
+                      );
+                      const hasDescriptionChangeDetails =
+                        !!parseDescriptionChangeDetails(activityItem.details);
+
+                      return (
+                        <div
+                          key={activityItem.id}
+                          className="rounded-xl border border-gray-200 bg-white p-4"
+                        >
                         <div className="flex gap-3">
                           <div className="h-8 w-8 rounded-full bg-indigo-100 text-indigo-700 text-xs font-semibold flex items-center justify-center shrink-0">
                             {(activityItem.user_name || "U").charAt(0).toUpperCase()}
@@ -2982,6 +3738,10 @@ export default function BoardView() {
                                 className={`mt-1 text-sm leading-relaxed ${
                                   activityItem.action === "commented"
                                     ? "rounded-lg border border-gray-200 bg-gray-50 p-3 text-gray-700"
+                                    : hasLabelChangeDetails
+                                    ? "rounded-lg border border-indigo-100 bg-indigo-50/40 p-3 text-gray-700"
+                                    : hasDescriptionChangeDetails
+                                    ? "rounded-lg border border-emerald-100 bg-emerald-50/30 p-3 text-gray-700"
                                     : "text-gray-700"
                                 }`}
                               >
@@ -2991,7 +3751,11 @@ export default function BoardView() {
                                     <div className="min-w-0">{renderTextWithLinks(activityItem.details)}</div>
                                   </div>
                                 ) : (
-                                  renderTextWithLinks(activityItem.details)
+                                  hasLabelChangeDetails
+                                    ? renderLabelChangeDetails(activityItem.details)
+                                    : hasDescriptionChangeDetails
+                                    ? renderDescriptionChangeDetails(activityItem.details)
+                                    : renderTextWithLinks(activityItem.details)
                                 )}
                               </div>
                             ) : null}
@@ -3031,8 +3795,9 @@ export default function BoardView() {
                             )}
                           </div>
                         </div>
-                      </div>
-                    ))}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>

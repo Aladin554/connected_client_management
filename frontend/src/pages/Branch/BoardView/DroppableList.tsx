@@ -45,7 +45,7 @@ export default function DroppableList({
     <div
       ref={setNodeRef}
       style={style}
-      className={`w-80 bg-white rounded-xl border border-gray-200 shadow-md flex flex-col min-h-[120px] will-change-transform ${
+      className={`w-[22rem] bg-white rounded-xl border border-gray-200 shadow-md flex flex-col min-h-[120px] will-change-transform ${
         isDragging ? "opacity-35" : ""
       }`}
     >

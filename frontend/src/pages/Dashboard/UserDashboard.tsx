@@ -21,6 +21,28 @@ interface Profile {
   first_name?: string | null;
 }
 
+const COMMISSIONS_CITY_ID = -9999;
+
+const CITY_DISPLAY_PRIORITY: Record<string, number> = {
+  dhaka: 0,
+  chittagong: 1,
+  sylhet: 2,
+};
+
+const isCommissionBoardName = (name: string): boolean => {
+  const normalized = name.trim().toLowerCase();
+  return normalized.includes("commission") || normalized.includes("comission");
+};
+
+const sortCitiesForDashboard = (items: City[]): City[] =>
+  [...items].sort((a, b) => {
+    const aPriority = CITY_DISPLAY_PRIORITY[a.name.trim().toLowerCase()] ?? Number.MAX_SAFE_INTEGER;
+    const bPriority = CITY_DISPLAY_PRIORITY[b.name.trim().toLowerCase()] ?? Number.MAX_SAFE_INTEGER;
+
+    if (aPriority !== bPriority) return aPriority - bPriority;
+    return a.name.localeCompare(b.name);
+  });
+
 function normalizeCities(payload: unknown): City[] {
   if (Array.isArray(payload)) return payload as City[];
 
@@ -93,9 +115,9 @@ export default function UserDashboard() {
   const normalizedSearchTerm = searchTerm.trim().toLowerCase();
 
   const filteredCities = useMemo(() => {
-    if (!normalizedSearchTerm) return cities;
-
-    return cities
+    const nextCities = !normalizedSearchTerm
+      ? cities
+      : cities
       .map((city) => {
         const cityMatch = city.name.toLowerCase().includes(normalizedSearchTerm);
         const boards = cityMatch
@@ -110,6 +132,39 @@ export default function UserDashboard() {
         };
       })
       .filter((city) => city.boards.length > 0);
+
+    const sortedCities = sortCitiesForDashboard(nextCities);
+    const commissionBoards: Board[] = [];
+
+    const nonCommissionCities = sortedCities
+      .map((city) => {
+        const boards = city.boards.filter((board) => {
+          if (isCommissionBoardName(board.name)) {
+            commissionBoards.push(board);
+            return false;
+          }
+          return true;
+        });
+
+        return {
+          ...city,
+          boards,
+        };
+      })
+      .filter((city) => city.boards.length > 0);
+
+    if (commissionBoards.length > 0) {
+      return [
+        ...nonCommissionCities,
+        {
+          id: COMMISSIONS_CITY_ID,
+          name: "Commissions",
+          boards: commissionBoards,
+        },
+      ];
+    }
+
+    return nonCommissionCities;
   }, [cities, normalizedSearchTerm]);
 
   const handleOpenProfileSettings = () => {

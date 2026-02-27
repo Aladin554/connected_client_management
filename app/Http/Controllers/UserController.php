@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Board;
+use App\Models\BoardCard;
 use App\Models\BoardList;
 use App\Models\User;
 use Illuminate\Http\Request;
@@ -514,11 +515,29 @@ class UserController extends Controller
             $validated['lists'] = array_intersect($validated['lists'] ?? [], $allowed);
         }
 
-        $user->boardLists()->sync($validated['lists'] ?? []);
+        $listIds = collect($validated['lists'] ?? [])
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+
+        $user->boardLists()->sync($listIds);
+
+        // Keep card-level membership in sync with admin-panel list access
+        // so card member circles/visibility match assigned permissions.
+        $cardIds = [];
+        if (!empty($listIds)) {
+            $cardIds = BoardCard::whereIn('board_list_id', $listIds)
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->unique()
+                ->values()
+                ->all();
+        }
+        $user->boardCards()->sync($cardIds);
 
         // Keep hierarchy consistent:
         // list access implies board + city access.
-        $listIds = $validated['lists'] ?? [];
         if (!empty($listIds)) {
             $boardIds = BoardList::whereIn('id', $listIds)
                 ->pluck('board_id')

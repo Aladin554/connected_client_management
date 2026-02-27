@@ -396,25 +396,25 @@ export default function AdminUsers() {
                   </th>
                 </>
               )}
-              <th className="px-5 py-3 text-left font-medium text-gray-700 dark:text-gray-300 border-r border-gray-200 dark:border-gray-700">
-                Created
-              </th>
-              <th className="px-5 py-3 text-left font-medium text-gray-700 dark:text-gray-300 border-r border-gray-200 dark:border-gray-700">
-                Updated
-              </th>
               <th className="px-5 py-3 text-left font-medium text-gray-700 dark:text-gray-300">Action</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
             {loading ? (
               <tr>
-                <td colSpan={10} className="text-center py-12 text-gray-500 dark:text-gray-400">
+                <td
+                  colSpan={currentUser?.role_id === 1 ? 6 : 4}
+                  className="text-center py-12 text-gray-500 dark:text-gray-400"
+                >
                   Loading...
                 </td>
               </tr>
             ) : paginatedData.length === 0 ? (
               <tr>
-                <td colSpan={10} className="text-center py-12 text-gray-500 dark:text-gray-400">
+                <td
+                  colSpan={currentUser?.role_id === 1 ? 6 : 4}
+                  className="text-center py-12 text-gray-500 dark:text-gray-400"
+                >
                   No users found
                 </td>
               </tr>
@@ -471,12 +471,6 @@ export default function AdminUsers() {
                     </>
                   )}
 
-                  <td className="px-4 py-3 border-r border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300">
-                    {formatDate(user.created_at)}
-                  </td>
-                  <td className="px-4 py-3 border-r border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300">
-                    {formatDate(user.updated_at)}
-                  </td>
                   <td className="px-4 py-3 flex gap-2">
                     <button
                       onClick={() => openEditForm(user)}
