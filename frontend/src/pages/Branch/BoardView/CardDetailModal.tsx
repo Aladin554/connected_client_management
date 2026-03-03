@@ -77,8 +77,10 @@ export default function CardDetailModal({
   const [selectedMemberIds, setSelectedMemberIds] = useState<number[]>([]);
   const [memberSearchTerm, setMemberSearchTerm] = useState("");
   const [membersError, setMembersError] = useState<string | null>(null);
+  const [canManageMembers, setCanManageMembers] = useState(
+    [1, 2, 3, 4].includes(Number(profile?.role_id))
+  );
 
-  const canManageMembers = Number(profile?.role_id) === 1 || Number(profile?.role_id) === 2;
   const canEditCardIdentity = [1, 2, 3].includes(Number(profile?.role_id));
 
   // Sync when card changes
@@ -113,9 +115,10 @@ export default function CardDetailModal({
     setSelectedMemberIds([]);
     setMemberSearchTerm("");
     setMembersError(null);
+    setCanManageMembers([1, 2, 3, 4].includes(Number(profile?.role_id)));
     fetchActivities();
     void fetchCardMembers();
-  }, [card]);
+  }, [card, profile?.role_id]);
 
   useEffect(() => {
     if (!isEditingDescription || !descriptionTextareaRef.current) return;
@@ -247,17 +250,22 @@ export default function CardDetailModal({
     setMembersError(null);
     try {
       const res = await api.get(`/cards/${card.id}/members`);
+      const fallbackCanManage = [1, 2, 3, 4].includes(Number(profile?.role_id));
+      const canManageFromApi =
+        typeof res.data?.can_manage === "boolean" ? Boolean(res.data.can_manage) : fallbackCanManage;
       const members: CardMember[] = res.data?.members || [];
       const optionsFromApi: CardMember[] = Array.isArray(res.data?.options)
         ? res.data.options
         : [];
       const options: CardMember[] = optionsFromApi.length > 0 ? optionsFromApi : members;
 
+      setCanManageMembers(canManageFromApi);
       setMemberPreview(members);
       setSelectedMemberIds(members.map((member) => member.id));
       setMemberOptions(options);
     } catch (err) {
       console.error("Failed to fetch card members:", err);
+      setCanManageMembers([1, 2, 3, 4].includes(Number(profile?.role_id)));
       setMembersError("Could not load members.");
     } finally {
       setMembersLoading(false);
@@ -1480,7 +1488,7 @@ export default function CardDetailModal({
                 <div className="border border-gray-200 rounded-xl overflow-hidden">
                   {filteredMemberOptions.length === 0 ? (
                     <div className="py-8 text-center text-sm text-gray-500">
-                      No users found for roles 2, 3, and 4.
+                      No eligible users found.
                     </div>
                   ) : (
                     <div className="max-h-[330px] overflow-y-auto divide-y">

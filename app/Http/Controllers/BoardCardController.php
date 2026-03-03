@@ -65,7 +65,19 @@ class BoardCardController extends Controller
 
     private function canManageCardMembers($user): bool
     {
-        return in_array((int) $user->role_id, [1, 2], true);
+        return !empty($this->manageableMemberRoleIds($user));
+    }
+
+    private function manageableMemberRoleIds($user): array
+    {
+        $roleId = (int) ($user->role_id ?? 0);
+
+        return match ($roleId) {
+            1, 2 => [2, 3, 4],
+            3 => [3, 4],
+            4 => [4],
+            default => [],
+        };
     }
 
     private function assertCanAccessBoardId(int $boardId): void
@@ -156,11 +168,17 @@ class BoardCardController extends Controller
             abort(404);
         }
 
-        return User::query()
+        $query = User::query()
             ->select('users.id', 'users.first_name', 'users.last_name', 'users.email', 'users.role_id')
-            ->whereIn('users.role_id', [2, 3, 4])
             ->orderBy('users.first_name')
             ->orderBy('users.last_name');
+
+        $manageableRoleIds = $this->manageableMemberRoleIds(Auth::user());
+        if (empty($manageableRoleIds)) {
+            return $query->whereRaw('1 = 0');
+        }
+
+        return $query->whereIn('users.role_id', $manageableRoleIds);
     }
 
     // Helper to get logged user full name
@@ -1106,7 +1124,7 @@ class BoardCardController extends Controller
 
         $user = Auth::user();
         if (!$this->canManageCardMembers($user)) {
-            return response()->json(['message' => 'Only superadmin/admin can manage card members'], 403);
+            return response()->json(['message' => 'You are not allowed to manage card members'], 403);
         }
 
         $validated = $request->validate([
@@ -1129,7 +1147,10 @@ class BoardCardController extends Controller
 
         $allowedIds = $this->eligibleMemberUsersQuery($boardCard)
             ->pluck('users.id')
-            ->map(fn ($id) => (int) $id);
+            ->map(fn ($id) => (int) $id)
+            ->merge($existingMemberIds)
+            ->unique()
+            ->values();
 
         $invalidIds = $requestedIds->diff($allowedIds);
         if ($invalidIds->isNotEmpty()) {
