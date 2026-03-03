@@ -1532,14 +1532,12 @@ export default function BoardView() {
 
     const draggingListId = getListIdFromDragId(event.active.id);
     if (draggingListId != null) {
-      if (!canMoveLists || isSearching || hasActiveFilters) return;
+      if (!canMoveLists) return;
       setActiveListId(draggingListId);
       return;
     }
 
     setActiveListId(null);
-
-    if (isSearching || hasActiveFilters) return;
 
     const cardId = Number(event.active.id);
     for (const list of board.lists) {
@@ -1561,7 +1559,7 @@ export default function BoardView() {
 
     // Reorder list columns (superadmin only).
     if (activeListDragId != null) {
-      if (!canMoveLists || isSearching || hasActiveFilters) return;
+      if (!canMoveLists) return;
       if (overListDragId == null || activeListDragId === overListDragId) return;
 
       const activeList = board.lists.find((list) => list.id === activeListDragId);
@@ -1625,8 +1623,6 @@ export default function BoardView() {
 
       return;
     }
-
-    if (isSearching || hasActiveFilters) return;
 
     const cardId = Number(event.active.id);
     if (!Number.isFinite(cardId)) return;
@@ -2295,15 +2291,14 @@ export default function BoardView() {
   if (!board) return null;
 
   const renderListColumn = (list: ListWithSearchMeta, canAddCard: boolean) => {
-    const listDragDisabled = isSearching || hasActiveFilters;
     const canDragThisList =
-      canMoveLists && !listDragDisabled && editingListId !== list.id;
+      canMoveLists && editingListId !== list.id;
 
     return (
     <DroppableList
       key={list.id}
       list={list}
-      dragDisabled={!canMoveLists || listDragDisabled}
+      dragDisabled={!canMoveLists}
     >
       {({ dragHandleProps }) => (
         <>
@@ -2397,7 +2392,6 @@ export default function BoardView() {
                   card={card}
                   onClick={() => setSelectedCard(card)}
                   labelBadges={getCardLabelBadges(card)}
-                  dragDisabled={isSearching || hasActiveFilters}
                   showActions={canManageCardQuickActions}
                   disableActions={processingCardActionId === card.id}
                   onOpenActions={handleOpenCardActions}
