@@ -395,6 +395,11 @@ export default function BoardView() {
             (user) => Number(user?.id) === Number(archivedSelectedMemberFilterId)
           )
         : null;
+    const archivedSelectedMemberRoleIdRaw =
+      archivedSelectedMemberUser?.role_id ?? archivedSelectedMemberUser?.role?.id;
+    const archivedSelectedMemberRoleId =
+      archivedSelectedMemberRoleIdRaw != null ? Number(archivedSelectedMemberRoleIdRaw) : null;
+    const allowArchivedMemberListFallback = archivedSelectedMemberRoleId === 2 || archivedSelectedMemberRoleId === 3;
     const archivedSelectedMemberAllowedListIds =
       archivedSelectedMemberFilterId !== ""
         ? new Set(
@@ -479,6 +484,7 @@ export default function BoardView() {
       if (archivedSelectedMemberFilterId !== "") {
         const hasDirectCardAccess = memberIds.includes(archivedSelectedMemberFilterId);
         const hasListAccess =
+          allowArchivedMemberListFallback &&
           Number.isFinite(cardListId) &&
           (archivedSelectedMemberAllowedListIds?.has(cardListId) ?? false);
         if (!hasDirectCardAccess && !hasListAccess) {
@@ -2003,6 +2009,11 @@ export default function BoardView() {
     const hasPaymentTerm = searchTerms.some((term) =>
       ["paid", "done", "unpaid", "pending"].includes(term)
     );
+    const selectedMemberRoleId =
+      selectedMemberFilterId !== ""
+        ? memberDirectoryById.get(selectedMemberFilterId)?.roleId ?? null
+        : null;
+    const allowListFallbackForSelectedMember = selectedMemberRoleId === 2 || selectedMemberRoleId === 3;
     const selectedMemberAllowedListIds =
       selectedMemberFilterId !== ""
         ? new Set(memberDirectoryById.get(selectedMemberFilterId)?.boardListIds || [])
@@ -2067,7 +2078,9 @@ export default function BoardView() {
       }
       if (selectedMemberFilterId !== "") {
         const hasDirectCardAccess = memberIds.includes(selectedMemberFilterId);
-        const hasListAccess = selectedMemberAllowedListIds?.has(Number(card.board_list_id)) ?? false;
+        const hasListAccess =
+          allowListFallbackForSelectedMember &&
+          (selectedMemberAllowedListIds?.has(Number(card.board_list_id)) ?? false);
         if (!hasDirectCardAccess && !hasListAccess) {
           return false;
         }
@@ -2179,6 +2192,7 @@ export default function BoardView() {
           if (hasActiveFilters) {
             const hasSelectedMemberListAccess =
               selectedMemberFilterId !== "" &&
+              allowListFallbackForSelectedMember &&
               (selectedMemberAllowedListIds?.has(Number(list.id)) ?? false);
             return list.cards.length > 0 || hasSelectedMemberListAccess;
           }
