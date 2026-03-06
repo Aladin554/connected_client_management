@@ -70,13 +70,10 @@ class User extends Authenticatable
     {
         $plainTextToken = Str::random(40);
 
-        $expiresAt = $this->role_id === 10 ? now()->addHours(72) : null;
-
         $token = $this->tokens()->create([
             'name'       => $name,
             'token'      => hash('sha256', $plainTextToken),
             'abilities'  => $abilities,
-            'expires_at' => $expiresAt,
         ]);
 
         return new NewAccessToken($token, $token->id . '|' . $plainTextToken);

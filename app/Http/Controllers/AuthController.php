@@ -33,15 +33,6 @@ class AuthController extends Controller
             ], 403);
         }
 
-        // Fixed 72-hour account expiry for role 3
-        if ((int) $user->role_id === 3 && $user->account_expires_at && $user->account_expires_at->isPast()) {
-            return response()->json([
-                'message' => 'Your 72-hour access has expired. Contact administrator.',
-                'expired_at' => $user->account_expires_at->toDateTimeString(),
-                'force_logout' => true
-            ], 403);
-        }
-
         // Dynamic IP restriction for roles 2, 3, 4.
         $clientIp = $this->getRealIp($request);
         if ($this->shouldEnforceIpFor($user)) {
@@ -56,16 +47,10 @@ class AuthController extends Controller
             }
         }
 
-        // Set fixed 72-hour expiry only on first-ever login (role 3)
-        if ((int) $user->role_id === 3 && is_null($user->account_expires_at)) {
-            $user->account_expires_at = now()->addHours(72);
-            $user->save();
-        }
-
         $user->last_login_at = now();
         $user->save();
 
-        // Token never expires (expiry controlled via account_expires_at).
+        // Token never expires.
         $token = $user->createToken('auth_token')->plainTextToken;
 
         return response()->json([
@@ -79,7 +64,7 @@ class AuthController extends Controller
                 'panel_permission' => (bool) $user->panel_permission,
                 'report_status' => (int) $user->report_status,
                 'last_login_at' => $user->last_login_at->toDateTimeString(),
-                'account_expires_at' => (int) $user->role_id === 3 ? $user->account_expires_at?->toDateTimeString() : null,
+                'account_expires_at' => null,
             ]
         ]);
     }
