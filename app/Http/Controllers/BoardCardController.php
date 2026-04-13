@@ -101,6 +101,11 @@ class BoardCardController extends Controller
         return !empty($this->manageableMemberRoleIds($user));
     }
 
+    private function canManagePaymentStatus($user): bool
+    {
+        return in_array((int) ($user->role_id ?? 0), [1, 2, 3], true);
+    }
+
     private function manageableMemberRoleIds($user): array
     {
         $roleId = (int) ($user->role_id ?? 0);
@@ -1095,6 +1100,10 @@ class BoardCardController extends Controller
     {
         $this->assertCanAccessBoardCard($boardCard);
 
+        if (!$this->canManagePaymentStatus(Auth::user())) {
+            return response()->json(['message' => 'Counsellor cannot update visa payment status'], 403);
+        }
+
         $validated = $request->validate([
             'payment_done' => 'required|boolean',
         ]);
@@ -1123,6 +1132,10 @@ class BoardCardController extends Controller
     public function updateDependantPaymentStatus(Request $request, BoardCard $boardCard)
     {
         $this->assertCanAccessBoardCard($boardCard);
+
+        if (!$this->canManagePaymentStatus(Auth::user())) {
+            return response()->json(['message' => 'Counsellor cannot update dependant payment status'], 403);
+        }
 
         $validated = $request->validate([
             'dependant_payment_done' => 'required|boolean',

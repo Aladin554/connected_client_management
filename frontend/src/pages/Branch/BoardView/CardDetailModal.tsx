@@ -82,6 +82,7 @@ export default function CardDetailModal({
   );
 
   const canEditCardIdentity = [1, 2, 3].includes(Number(profile?.role_id));
+  const canManagePaymentStatus = [1, 2, 3].includes(Number(profile?.role_id));
 
   // Sync when card changes
   useEffect(() => {
@@ -571,7 +572,7 @@ export default function CardDetailModal({
   };
 
   const handleTogglePayment = async () => {
-    if (savingPayment) return;
+    if (!canManagePaymentStatus || savingPayment) return;
 
     setSavingPayment(true);
     const nextStatus = !paymentDone;
@@ -593,7 +594,7 @@ export default function CardDetailModal({
   };
 
   const handleToggleDependantPayment = async () => {
-    if (savingDependantPayment) return;
+    if (!canManagePaymentStatus || savingDependantPayment) return;
 
     setSavingDependantPayment(true);
     const nextStatus = !dependantPaymentDone;
@@ -898,49 +899,53 @@ export default function CardDetailModal({
 
               {showCardActionsMenu && (
                 <div className="absolute right-0 mt-2 w-60 rounded-lg border border-gray-200 bg-white shadow-lg p-1.5 z-20">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowCardActionsMenu(false);
-                      void handleTogglePayment();
-                    }}
-                    disabled={savingPayment}
-                    className={`w-full flex items-center gap-2 rounded-md px-3 py-2 text-sm text-left transition ${
-                      savingPayment
-                        ? "text-gray-400 cursor-not-allowed"
-                        : paymentDone
-                        ? "text-emerald-700 hover:bg-emerald-50"
-                        : "text-rose-700 hover:bg-rose-50"
-                    }`}
-                  >
-                    <CreditCard size={15} />
-                    {savingPayment ? "Saving..." : paymentDone ? "Visa Payment Done" : "Mark Visa Payment Done"}
-                  </button>
+                  {canManagePaymentStatus && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowCardActionsMenu(false);
+                          void handleTogglePayment();
+                        }}
+                        disabled={savingPayment}
+                        className={`w-full flex items-center gap-2 rounded-md px-3 py-2 text-sm text-left transition ${
+                          savingPayment
+                            ? "text-gray-400 cursor-not-allowed"
+                            : paymentDone
+                            ? "text-emerald-700 hover:bg-emerald-50"
+                            : "text-rose-700 hover:bg-rose-50"
+                        }`}
+                      >
+                        <CreditCard size={15} />
+                        {savingPayment ? "Saving..." : paymentDone ? "Visa Payment Done" : "Mark Visa Payment Done"}
+                      </button>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowCardActionsMenu(false);
-                      void handleToggleDependantPayment();
-                    }}
-                    disabled={savingDependantPayment}
-                    className={`w-full flex items-center gap-2 rounded-md px-3 py-2 text-sm text-left transition ${
-                      savingDependantPayment
-                        ? "text-gray-400 cursor-not-allowed"
-                        : dependantPaymentDone
-                        ? "text-emerald-700 hover:bg-emerald-50"
-                        : "text-amber-700 hover:bg-amber-50"
-                    }`}
-                  >
-                    <CreditCard size={15} />
-                    {savingDependantPayment
-                      ? "Saving..."
-                      : dependantPaymentDone
-                      ? "Dependant Payment Done"
-                      : "Mark Dependant Payment Done"}
-                  </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowCardActionsMenu(false);
+                          void handleToggleDependantPayment();
+                        }}
+                        disabled={savingDependantPayment}
+                        className={`w-full flex items-center gap-2 rounded-md px-3 py-2 text-sm text-left transition ${
+                          savingDependantPayment
+                            ? "text-gray-400 cursor-not-allowed"
+                            : dependantPaymentDone
+                            ? "text-emerald-700 hover:bg-emerald-50"
+                            : "text-amber-700 hover:bg-amber-50"
+                        }`}
+                      >
+                        <CreditCard size={15} />
+                        {savingDependantPayment
+                          ? "Saving..."
+                          : dependantPaymentDone
+                          ? "Dependant Payment Done"
+                          : "Mark Dependant Payment Done"}
+                      </button>
 
-                  <div className="my-1 border-t border-gray-100" />
+                      <div className="my-1 border-t border-gray-100" />
+                    </>
+                  )}
 
                   <button
                     type="button"
