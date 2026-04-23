@@ -36,6 +36,11 @@ class BoardCardController extends Controller
         return (int) ($user->role_id ?? 0) === 3;
     }
 
+    private function canSubadminWriteNewCustomersCard($user, ?BoardList $boardList): bool
+    {
+        return $this->isReadOnlyNewCustomersList($user, $boardList);
+    }
+
     private function isReadOnlyNewCustomersList($user, ?BoardList $boardList): bool
     {
         return $boardList !== null
@@ -163,6 +168,18 @@ class BoardCardController extends Controller
         return $isCardMember;
     }
 
+    private function canAccessBoardCardExtendedWrite($user, BoardCard $boardCard, ?BoardList $boardList = null): bool
+    {
+        $resolvedBoardList = $boardList;
+        if (!$resolvedBoardList) {
+            $boardCard->loadMissing('boardList');
+            $resolvedBoardList = $boardCard->boardList;
+        }
+
+        return $this->canAccessBoardCardForWrite($user, $boardCard, $resolvedBoardList)
+            || $this->canSubadminWriteNewCustomersCard($user, $resolvedBoardList);
+    }
+
     private function assertCanAccessBoardId(int $boardId): void
     {
         $user = Auth::user();
@@ -229,6 +246,24 @@ class BoardCardController extends Controller
 
         $this->assertCanAccessBoardId((int) $boardList->board_id);
         if ($this->canAccessBoardCardForWrite($user, $boardCard, $boardList)) {
+            return;
+        }
+
+        abort(403, 'Forbidden');
+    }
+
+    private function assertCanAccessBoardCardExtendedWrite(BoardCard $boardCard): void
+    {
+        $user = Auth::user();
+        $boardCard->loadMissing('boardList');
+
+        $boardList = $boardCard->boardList;
+        if (!$boardList) {
+            abort(404);
+        }
+
+        $this->assertCanAccessBoardId((int) $boardList->board_id);
+        if ($this->canAccessBoardCardExtendedWrite($user, $boardCard, $boardList)) {
             return;
         }
 
@@ -480,7 +515,7 @@ class BoardCardController extends Controller
     // Archive / unarchive card
     public function updateArchiveStatus(Request $request, BoardCard $boardCard)
     {
-        $this->assertCanAccessBoardCard($boardCard);
+        $this->assertCanAccessBoardCardExtendedWrite($boardCard);
 
         $validated = $request->validate([
             'is_archived' => 'required|boolean',
@@ -967,7 +1002,7 @@ class BoardCardController extends Controller
     // Update labels + log
     public function updateLabel(Request $request, BoardCard $boardCard)
     {
-        $this->assertCanAccessBoardCard($boardCard);
+        $this->assertCanAccessBoardCardExtendedWrite($boardCard);
 
         $beforeCountryIds = $this->extractCardLabelIds($boardCard->country_label_id, $boardCard->country_label_ids);
         $beforeIntakeId = !is_null($boardCard->intake_label_id) ? (int) $boardCard->intake_label_id : null;
@@ -1067,7 +1102,7 @@ class BoardCardController extends Controller
     // Update description
     public function updateDescription(Request $request, BoardCard $boardCard)
     {
-        $this->assertCanAccessBoardCard($boardCard);
+        $this->assertCanAccessBoardCardExtendedWrite($boardCard);
 
         $beforeDescription = (string) ($boardCard->description ?? '');
 
@@ -1098,7 +1133,7 @@ class BoardCardController extends Controller
     // Update payment status
     public function updatePaymentStatus(Request $request, BoardCard $boardCard)
     {
-        $this->assertCanAccessBoardCard($boardCard);
+        $this->assertCanAccessBoardCardExtendedWrite($boardCard);
 
         if (!$this->canManagePaymentStatus(Auth::user())) {
             return response()->json(['message' => 'Counsellor cannot update visa payment status'], 403);
@@ -1131,7 +1166,7 @@ class BoardCardController extends Controller
     // Update dependant payment status
     public function updateDependantPaymentStatus(Request $request, BoardCard $boardCard)
     {
-        $this->assertCanAccessBoardCard($boardCard);
+        $this->assertCanAccessBoardCardExtendedWrite($boardCard);
 
         if (!$this->canManagePaymentStatus(Auth::user())) {
             return response()->json(['message' => 'Counsellor cannot update dependant payment status'], 403);
@@ -1166,7 +1201,7 @@ class BoardCardController extends Controller
     // Update due date
     public function updateDueDate(Request $request, BoardCard $boardCard)
     {
-        $this->assertCanAccessBoardCard($boardCard);
+        $this->assertCanAccessBoardCardExtendedWrite($boardCard);
 
         $validated = $request->validate([
             'due_date' => 'nullable|date',
@@ -1204,7 +1239,7 @@ class BoardCardController extends Controller
 
         $user = Auth::user();
         $canManage = $this->canManageCardMembers($user)
-            && $this->canAccessBoardCardForWrite($user, $boardCard);
+            && $this->canAccessBoardCardExtendedWrite($user, $boardCard);
 
         $members = $boardCard->members()
             ->select('users.id', 'users.first_name', 'users.last_name', 'users.email', 'users.role_id')
@@ -1234,7 +1269,7 @@ class BoardCardController extends Controller
     // UPDATE card member visibility
     public function updateMembers(Request $request, BoardCard $boardCard)
     {
-        $this->assertCanAccessBoardCard($boardCard);
+        $this->assertCanAccessBoardCardExtendedWrite($boardCard);
 
         $user = Auth::user();
         if (!$this->canManageCardMembers($user)) {
@@ -1432,7 +1467,7 @@ class BoardCardController extends Controller
     // POST comment
     public function storeComment(Request $request, BoardCard $boardCard)
     {
-        $this->assertCanAccessBoardCard($boardCard);
+        $this->assertCanAccessBoardCardExtendedWrite($boardCard);
 
         $validated = $request->validate([
             'details'    => 'nullable|string|max:2000',
