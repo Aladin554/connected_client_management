@@ -26,31 +26,9 @@ class BoardCardController extends Controller
         return str_contains($normalized, 'commission') || str_contains($normalized, 'comission');
     }
 
-    private function isNewCustomersListName(?string $title): bool
+    private function canReadAllBoardLists($user): bool
     {
-        return strtolower(trim((string) $title)) === 'new customers';
-    }
-
-    private function canSubadminReadNewCustomersList($user): bool
-    {
-        return (int) ($user->role_id ?? 0) === 3;
-    }
-
-    private function canSubadminWriteNewCustomersCard($user, ?BoardList $boardList): bool
-    {
-        return $this->isReadOnlyNewCustomersList($user, $boardList);
-    }
-
-    private function isReadOnlyNewCustomersList($user, ?BoardList $boardList): bool
-    {
-        return $boardList !== null
-            && $this->canSubadminReadNewCustomersList($user)
-            && $this->isNewCustomersListName($boardList->title ?? null);
-    }
-
-    private function applyNewCustomersListScope($listQuery): void
-    {
-        $listQuery->whereRaw('LOWER(TRIM(title)) = ?', ['new customers']);
+        return in_array((int) ($user->role_id ?? 0), [1, 2, 3, 4], true);
     }
 
     private function canBypassListPermissions($user): bool
@@ -75,19 +53,8 @@ class BoardCardController extends Controller
         }
 
         if ($this->requiresExplicitCardMembership($user)) {
-            $cardQuery->where(function ($visibleQuery) use ($user) {
-                if ($this->canSubadminReadNewCustomersList($user)) {
-                    $visibleQuery->whereHas('boardList', function ($listQuery) {
-                        $this->applyNewCustomersListScope($listQuery);
-                    })->orWhereHas('members', function ($memberQuery) use ($user) {
-                        $memberQuery->where('users.id', $user->id);
-                    });
-                    return;
-                }
-
-                $visibleQuery->whereHas('members', function ($memberQuery) use ($user) {
-                    $memberQuery->where('users.id', $user->id);
-                });
+            $cardQuery->whereHas('members', function ($memberQuery) use ($user) {
+                $memberQuery->where('users.id', $user->id);
             });
             return;
         }
@@ -136,6 +103,48 @@ class BoardCardController extends Controller
         return $user->boardLists()->whereKey($boardList->id)->exists();
     }
 
+    private function canReadBoardList($user, BoardList $boardList): bool
+    {
+        if (!$user) {
+            return false;
+        }
+
+        return $this->canReadAllBoardLists($user)
+            || $this->hasAssignedBoardListAccess($user, $boardList);
+    }
+
+    private function canReadBoardCard($user, BoardCard $boardCard, ?BoardList $boardList = null): bool
+    {
+        $resolvedBoardList = $boardList;
+        if (!$resolvedBoardList) {
+            $boardCard->loadMissing('boardList');
+            $resolvedBoardList = $boardCard->boardList;
+        }
+
+        if (!$resolvedBoardList || !$this->canReadBoardList($user, $resolvedBoardList)) {
+            return false;
+        }
+
+        if ($this->canBypassCardMemberVisibility($user)) {
+            return true;
+        }
+
+        $isCardMember = $boardCard->members()
+            ->where('users.id', $user->id)
+            ->exists();
+
+        if ($this->requiresExplicitCardMembership($user)) {
+            return $isCardMember;
+        }
+
+        $hasMemberRestriction = $boardCard->members()->exists();
+        if (!$hasMemberRestriction) {
+            return true;
+        }
+
+        return $isCardMember;
+    }
+
     private function canAccessBoardCardForWrite($user, BoardCard $boardCard, ?BoardList $boardList = null): bool
     {
         $resolvedBoardList = $boardList;
@@ -144,7 +153,7 @@ class BoardCardController extends Controller
             $resolvedBoardList = $boardCard->boardList;
         }
 
-        if (!$resolvedBoardList || !$this->hasAssignedBoardListAccess($user, $resolvedBoardList)) {
+        if (!$resolvedBoardList || !$this->canReadBoardList($user, $resolvedBoardList)) {
             return false;
         }
 
@@ -176,8 +185,7 @@ class BoardCardController extends Controller
             $resolvedBoardList = $boardCard->boardList;
         }
 
-        return $this->canAccessBoardCardForWrite($user, $boardCard, $resolvedBoardList)
-            || $this->canSubadminWriteNewCustomersCard($user, $resolvedBoardList);
+        return $this->canAccessBoardCardForWrite($user, $boardCard, $resolvedBoardList);
     }
 
     private function assertCanAccessBoardId(int $boardId): void
@@ -224,10 +232,7 @@ class BoardCardController extends Controller
         $this->assertCanAccessBoardId((int) $boardList->board_id);
 
         $user = Auth::user();
-        if (
-            $this->hasAssignedBoardListAccess($user, $boardList)
-            || $this->isReadOnlyNewCustomersList($user, $boardList)
-        ) {
+        if ($this->canReadBoardList($user, $boardList)) {
             return;
         }
 
@@ -281,10 +286,7 @@ class BoardCardController extends Controller
         }
 
         $this->assertCanAccessBoardId((int) $boardList->board_id);
-        if (
-            $this->canAccessBoardCardForWrite($user, $boardCard, $boardList)
-            || $this->isReadOnlyNewCustomersList($user, $boardList)
-        ) {
+        if ($this->canReadBoardCard($user, $boardCard, $boardList)) {
             return;
         }
 
@@ -493,17 +495,11 @@ class BoardCardController extends Controller
             ])
             ->orderByDesc('updated_at');
 
-        if (!$this->canBypassListPermissions($user)) {
+        if (!$this->canReadAllBoardLists($user)) {
             $query->where(function ($visibleQuery) use ($user) {
                 $visibleQuery->whereHas('boardList.users', function ($userQuery) use ($user) {
                     $userQuery->where('users.id', $user->id);
                 });
-
-                if ($this->canSubadminReadNewCustomersList($user)) {
-                    $visibleQuery->orWhereHas('boardList', function ($listQuery) {
-                        $this->applyNewCustomersListScope($listQuery);
-                    });
-                }
             });
         }
 
@@ -759,8 +755,8 @@ class BoardCardController extends Controller
         }
 
         $this->assertCanAccessBoardId((int) $oldList->board_id);
-        $this->assertCanAccessBoardList($newList);
-        $this->assertCanAccessBoardCard($card);
+        $this->assertCanReadBoardList($newList);
+        $this->assertCanReadBoardCard($card);
 
         $oldCategory = (int) (($oldList->category ?? BoardList::CATEGORY_ADMISSION));
         $targetCategory = (int) ($newList->category ?? BoardList::CATEGORY_ADMISSION);
@@ -1429,7 +1425,7 @@ class BoardCardController extends Controller
             $query->where('action', 'commented');
         }
 
-        if (!$this->canBypassListPermissions($user)) {
+        if (!$this->canReadAllBoardLists($user)) {
             $query->where(function ($scope) use ($user) {
                 $scope
                     ->whereHas('card.boardList.users', function ($userQuery) use ($user) {
@@ -1438,16 +1434,6 @@ class BoardCardController extends Controller
                     ->orWhereHas('list.users', function ($userQuery) use ($user) {
                         $userQuery->where('users.id', $user->id);
                     });
-
-                if ($this->canSubadminReadNewCustomersList($user)) {
-                    $scope
-                        ->orWhereHas('card.boardList', function ($listQuery) {
-                            $this->applyNewCustomersListScope($listQuery);
-                        })
-                        ->orWhereHas('list', function ($listQuery) {
-                            $this->applyNewCustomersListScope($listQuery);
-                        });
-                }
             });
         }
 

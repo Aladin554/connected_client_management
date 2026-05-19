@@ -19,19 +19,9 @@ class BoardController extends Controller
         return $this->isCommissionBoardName($board->name ?? null);
     }
 
-    private function canSubadminReadNewCustomersList($user): bool
+    private function canReadAllBoardLists($user): bool
     {
-        return (int) ($user->role_id ?? 0) === 3;
-    }
-
-    private function applyNewCustomersListScope($listQuery): void
-    {
-        $listQuery->whereRaw('LOWER(TRIM(title)) = ?', ['new customers']);
-    }
-
-    private function canBypassListPermissions($user): bool
-    {
-        return in_array((int) $user->role_id, [1, 2], true);
+        return in_array((int) $user->role_id, [1, 2, 3, 4], true);
     }
 
     private function canBypassCardMemberVisibility($user): bool
@@ -51,19 +41,8 @@ class BoardController extends Controller
         }
 
         if ($this->requiresExplicitCardMembership($user)) {
-            $cardQuery->where(function ($visibleQuery) use ($user) {
-                if ($this->canSubadminReadNewCustomersList($user)) {
-                    $visibleQuery->whereHas('boardList', function ($listQuery) {
-                        $this->applyNewCustomersListScope($listQuery);
-                    })->orWhereHas('members', function ($memberQuery) use ($user) {
-                        $memberQuery->where('users.id', $user->id);
-                    });
-                    return;
-                }
-
-                $visibleQuery->whereHas('members', function ($memberQuery) use ($user) {
-                    $memberQuery->where('users.id', $user->id);
-                });
+            $cardQuery->whereHas('members', function ($memberQuery) use ($user) {
+                $memberQuery->where('users.id', $user->id);
             });
             return;
         }
@@ -85,17 +64,11 @@ class BoardController extends Controller
                     $listQuery->where('category', BoardList::CATEGORY_COMMISSION_BOARD);
                 }
 
-                if (!$this->canBypassListPermissions($user)) {
+                if (!$this->canReadAllBoardLists($user)) {
                     $listQuery->where(function ($visibleListQuery) use ($user) {
                         $visibleListQuery->whereHas('users', function ($userQuery) use ($user) {
                             $userQuery->where('users.id', $user->id);
                         });
-
-                        if ($this->canSubadminReadNewCustomersList($user)) {
-                            $visibleListQuery->orWhere(function ($newCustomersQuery) {
-                                $this->applyNewCustomersListScope($newCustomersQuery);
-                            });
-                        }
                     });
                 }
 

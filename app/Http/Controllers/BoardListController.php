@@ -24,6 +24,38 @@ class BoardListController extends Controller
         return (int) $user->role_id === 1;
     }
 
+    private function canReadAllLists($user): bool
+    {
+        return in_array((int) ($user->role_id ?? 0), [1, 2, 3, 4], true);
+    }
+
+    private function requiresExplicitCardMembership($user): bool
+    {
+        return in_array((int) ($user->role_id ?? 0), [3, 4], true);
+    }
+
+    private function applyCardVisibilityScope($cardQuery, $user): void
+    {
+        if (in_array((int) ($user->role_id ?? 0), [1, 2], true)) {
+            return;
+        }
+
+        if ($this->requiresExplicitCardMembership($user)) {
+            $cardQuery->whereHas('members', function ($memberQuery) use ($user) {
+                $memberQuery->where('users.id', $user->id);
+            });
+            return;
+        }
+
+        $cardQuery->where(function ($visibleQuery) use ($user) {
+            $visibleQuery
+                ->whereDoesntHave('members')
+                ->orWhereHas('members', function ($memberQuery) use ($user) {
+                    $memberQuery->where('users.id', $user->id);
+                });
+        });
+    }
+
     private function assertCanAccessBoard(Board $board): void
     {
         $user = auth()->user();
@@ -64,11 +96,15 @@ class BoardListController extends Controller
     {
         $this->assertCanAccessBoard($board);
 
+        $user = auth()->user();
+
         $query = $board->lists()->with([
-            'cards' => function ($cardQuery) {
+            'cards' => function ($cardQuery) use ($user) {
                 $cardQuery
                     ->where('is_archived', false)
                     ->orderBy('position');
+
+                $this->applyCardVisibilityScope($cardQuery, $user);
             },
         ]);
 
@@ -76,9 +112,9 @@ class BoardListController extends Controller
             $query->where('category', BoardList::CATEGORY_COMMISSION_BOARD);
         }
 
-        if (!$this->canManageAllLists(auth()->user())) {
-            $query->whereHas('users', function ($userQuery) {
-                $userQuery->where('users.id', auth()->id());
+        if (!$this->canReadAllLists($user)) {
+            $query->whereHas('users', function ($userQuery) use ($user) {
+                $userQuery->where('users.id', $user->id);
             });
         }
 
