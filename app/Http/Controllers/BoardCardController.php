@@ -41,6 +41,19 @@ class BoardCardController extends Controller
         return in_array((int) $user->role_id, [1, 2], true);
     }
 
+    private function isOpenVisibilityList(?BoardList $boardList): bool
+    {
+        return in_array(strtolower(trim((string) ($boardList?->title ?? ''))), [
+            'new customers',
+            'member assigned',
+        ], true);
+    }
+
+    private function canReadAllCardsInOpenVisibilityLists($user): bool
+    {
+        return (int) ($user->role_id ?? 0) === 3;
+    }
+
     private function requiresExplicitCardMembership($user): bool
     {
         return in_array((int) $user->role_id, [3, 4], true);
@@ -53,8 +66,19 @@ class BoardCardController extends Controller
         }
 
         if ($this->requiresExplicitCardMembership($user)) {
-            $cardQuery->whereHas('members', function ($memberQuery) use ($user) {
-                $memberQuery->where('users.id', $user->id);
+            $cardQuery->where(function ($visibleQuery) use ($user) {
+                $visibleQuery->whereHas('members', function ($memberQuery) use ($user) {
+                    $memberQuery->where('users.id', $user->id);
+                });
+
+                if ($this->canReadAllCardsInOpenVisibilityLists($user)) {
+                    $visibleQuery->orWhereHas('boardList', function ($listQuery) {
+                        $listQuery->whereIn(\DB::raw('LOWER(TRIM(title))'), [
+                            'new customers',
+                            'member assigned',
+                        ]);
+                    });
+                }
             });
             return;
         }
@@ -134,6 +158,13 @@ class BoardCardController extends Controller
             ->exists();
 
         if ($this->requiresExplicitCardMembership($user)) {
+            if (
+                $this->canReadAllCardsInOpenVisibilityLists($user) &&
+                $this->isOpenVisibilityList($resolvedBoardList)
+            ) {
+                return true;
+            }
+
             return $isCardMember;
         }
 
@@ -166,6 +197,13 @@ class BoardCardController extends Controller
             ->exists();
 
         if ($this->requiresExplicitCardMembership($user)) {
+            if (
+                $this->canReadAllCardsInOpenVisibilityLists($user) &&
+                $this->isOpenVisibilityList($resolvedBoardList)
+            ) {
+                return true;
+            }
+
             return $isCardMember;
         }
 

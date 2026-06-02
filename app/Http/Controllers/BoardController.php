@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Board;
 use App\Models\BoardList;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class BoardController extends Controller
 {
@@ -29,6 +30,11 @@ class BoardController extends Controller
         return in_array((int) $user->role_id, [1, 2], true);
     }
 
+    private function canReadAllCardsInOpenVisibilityLists($user): bool
+    {
+        return (int) ($user->role_id ?? 0) === 3;
+    }
+
     private function requiresExplicitCardMembership($user): bool
     {
         return in_array((int) $user->role_id, [3, 4], true);
@@ -41,8 +47,19 @@ class BoardController extends Controller
         }
 
         if ($this->requiresExplicitCardMembership($user)) {
-            $cardQuery->whereHas('members', function ($memberQuery) use ($user) {
-                $memberQuery->where('users.id', $user->id);
+            $cardQuery->where(function ($visibleQuery) use ($user) {
+                $visibleQuery->whereHas('members', function ($memberQuery) use ($user) {
+                    $memberQuery->where('users.id', $user->id);
+                });
+
+                if ($this->canReadAllCardsInOpenVisibilityLists($user)) {
+                    $visibleQuery->orWhereHas('boardList', function ($listQuery) {
+                        $listQuery->whereIn(\DB::raw('LOWER(TRIM(title))'), [
+                            'new customers',
+                            'member assigned',
+                        ]);
+                    });
+                }
             });
             return;
         }
@@ -162,6 +179,34 @@ class BoardController extends Controller
                 $this->isCommissionBoard($board)
             )->firstOrFail(),
         ]);
+    }
+
+    public function memberCardCounts(Board $board)
+    {
+        $user = auth()->user();
+
+        if ($this->isCommissionBoard($board) && (int) $user->role_id !== 1) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        if ((int) $user->role_id !== 1 && !$user->boards()->whereKey($board->id)->exists()) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $counts = DB::table('board_card_user')
+            ->join('board_cards', 'board_card_user.board_card_id', '=', 'board_cards.id')
+            ->join('board_lists', 'board_cards.board_list_id', '=', 'board_lists.id')
+            ->where('board_lists.board_id', $board->id)
+            ->where('board_cards.is_archived', false)
+            ->select('board_card_user.user_id', DB::raw('COUNT(DISTINCT board_cards.id) as card_count'))
+            ->groupBy('board_card_user.user_id')
+            ->get()
+            ->map(fn ($row) => [
+                'user_id' => (int) $row->user_id,
+                'card_count' => (int) $row->card_count,
+            ]);
+
+        return response()->json(['data' => $counts]);
     }
 
     /**

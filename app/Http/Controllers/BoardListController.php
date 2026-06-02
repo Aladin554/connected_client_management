@@ -34,6 +34,11 @@ class BoardListController extends Controller
         return in_array((int) ($user->role_id ?? 0), [3, 4], true);
     }
 
+    private function canReadAllCardsInOpenVisibilityLists($user): bool
+    {
+        return (int) ($user->role_id ?? 0) === 3;
+    }
+
     private function applyCardVisibilityScope($cardQuery, $user): void
     {
         if (in_array((int) ($user->role_id ?? 0), [1, 2], true)) {
@@ -41,8 +46,19 @@ class BoardListController extends Controller
         }
 
         if ($this->requiresExplicitCardMembership($user)) {
-            $cardQuery->whereHas('members', function ($memberQuery) use ($user) {
-                $memberQuery->where('users.id', $user->id);
+            $cardQuery->where(function ($visibleQuery) use ($user) {
+                $visibleQuery->whereHas('members', function ($memberQuery) use ($user) {
+                    $memberQuery->where('users.id', $user->id);
+                });
+
+                if ($this->canReadAllCardsInOpenVisibilityLists($user)) {
+                    $visibleQuery->orWhereHas('boardList', function ($listQuery) {
+                        $listQuery->whereIn(\DB::raw('LOWER(TRIM(title))'), [
+                            'new customers',
+                            'member assigned',
+                        ]);
+                    });
+                }
             });
             return;
         }

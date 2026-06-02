@@ -44,6 +44,132 @@ class BoardListAndCardMemberVisibilityTest extends TestCase
         $this->assertNotContains($hiddenCard->id, $cardIds);
     }
 
+    public function test_subadmin_can_read_all_cards_in_new_customers_and_member_assigned_lists(): void
+    {
+        $user = $this->makeUser(roleId: 3);
+        $city = City::create(['name' => 'Dhaka']);
+
+        $board = Model::unguarded(fn () => Board::create([
+            'name' => 'Admissions Board',
+            'city_id' => $city->id,
+        ]));
+
+        $board->users()->attach($user->id);
+
+        $newCustomersList = BoardList::create([
+            'board_id' => $board->id,
+            'title' => 'New Customers',
+            'position' => 1,
+        ]);
+
+        $memberAssignedList = BoardList::create([
+            'board_id' => $board->id,
+            'title' => 'Member Assigned',
+            'position' => 2,
+        ]);
+
+        $normalList = BoardList::create([
+            'board_id' => $board->id,
+            'title' => 'Visa Follow Up',
+            'position' => 3,
+        ]);
+
+        $newCustomerCard = BoardCard::create([
+            'board_list_id' => $newCustomersList->id,
+            'invoice' => 'INV-' . Str::upper(Str::random(10)),
+            'first_name' => 'Visible',
+            'last_name' => 'New Customer',
+            'position' => 1,
+        ]);
+
+        $memberAssignedCard = BoardCard::create([
+            'board_list_id' => $memberAssignedList->id,
+            'invoice' => 'INV-' . Str::upper(Str::random(10)),
+            'first_name' => 'Visible',
+            'last_name' => 'Member Assigned',
+            'position' => 1,
+        ]);
+
+        $normalHiddenCard = BoardCard::create([
+            'board_list_id' => $normalList->id,
+            'invoice' => 'INV-' . Str::upper(Str::random(10)),
+            'first_name' => 'Hidden',
+            'last_name' => 'Normal',
+            'position' => 1,
+        ]);
+
+        Sanctum::actingAs($user);
+
+        $response = $this->getJson("/api/boards/{$board->id}")
+            ->assertOk();
+
+        $cardIds = collect($response->json('data.lists'))
+            ->flatMap(fn (array $list) => collect($list['cards'] ?? [])->pluck('id'))
+            ->all();
+
+        $this->assertContains($newCustomerCard->id, $cardIds);
+        $this->assertContains($memberAssignedCard->id, $cardIds);
+        $this->assertNotContains($normalHiddenCard->id, $cardIds);
+
+        $this->getJson("/api/board-lists/{$newCustomersList->id}/cards")
+            ->assertOk()
+            ->assertJsonFragment(['id' => $newCustomerCard->id]);
+
+        $this->getJson("/api/board-lists/{$memberAssignedList->id}/cards/{$memberAssignedCard->id}")
+            ->assertOk();
+
+        $this->putJson("/api/cards/{$newCustomerCard->id}/description", [
+            'description' => 'Subadmin can save this open visibility card.',
+        ])->assertOk();
+
+        $this->putJson("/api/board-lists/{$memberAssignedList->id}/cards/{$memberAssignedCard->id}", [
+            'invoice' => $memberAssignedCard->invoice,
+            'first_name' => 'Saved',
+            'last_name' => 'Member Assigned',
+        ])->assertOk();
+
+        $this->assertDatabaseHas('board_cards', [
+            'id' => $newCustomerCard->id,
+            'description' => 'Subadmin can save this open visibility card.',
+        ]);
+
+        $this->assertDatabaseHas('board_cards', [
+            'id' => $memberAssignedCard->id,
+            'first_name' => 'Saved',
+        ]);
+    }
+
+    public function test_subadmin_member_card_counts_include_hidden_counsellor_cards(): void
+    {
+        $subadmin = $this->makeUser(roleId: 3);
+        $counsellor = $this->makeUser(roleId: 4);
+        [$board, , $list, $visibleCard, $hiddenCard] = $this->makeBoardWithCards($subadmin);
+
+        $board->users()->attach($counsellor->id);
+
+        $visibleCard->members()->attach($counsellor->id);
+        $hiddenCard->members()->attach($counsellor->id);
+
+        Sanctum::actingAs($subadmin);
+
+        $this->getJson("/api/boards/{$board->id}/member-card-counts")
+            ->assertOk()
+            ->assertJsonFragment([
+                'user_id' => $counsellor->id,
+                'card_count' => 2,
+            ]);
+
+        $response = $this->getJson("/api/boards/{$board->id}")
+            ->assertOk();
+
+        $visibleCardIds = collect($response->json('data.lists'))
+            ->flatMap(fn (array $list) => collect($list['cards'] ?? [])->pluck('id'))
+            ->all();
+
+        $this->assertContains($visibleCard->id, $visibleCardIds);
+        $this->assertNotContains($hiddenCard->id, $visibleCardIds);
+    }
+
     public function test_counsellor_can_read_all_lists_but_only_member_cards_on_board_show(): void
     {
         $user = $this->makeUser(roleId: 4);

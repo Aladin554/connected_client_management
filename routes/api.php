@@ -59,6 +59,7 @@ Route::middleware(['auth:sanctum', CheckPanelAccess::class, 'admin.ip'])->group(
     Route::get('/boards', [BoardController::class, 'index']);
     Route::post('/boards', [BoardController::class, 'store']);        // Superadmin only
     Route::get('/boards/{board}', [BoardController::class, 'show']);
+    Route::get('/boards/{board}/member-card-counts', [BoardController::class, 'memberCardCounts']);
     Route::get('/boards/{board}/archived-cards', [BoardCardController::class, 'archivedByBoard']);
     Route::get('/boards/{board}/activities', [BoardCardController::class, 'boardActivities']);
     Route::put('/boards/{board}', [BoardController::class, 'update']); // Superadmin only

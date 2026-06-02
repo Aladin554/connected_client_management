@@ -265,6 +265,7 @@ export default function BoardView() {
   const [selectedServiceAreaFilterIds, setSelectedServiceAreaFilterIds] = useState<number[]>([]);
   const [selectedMemberFilterId, setSelectedMemberFilterId] = useState<number | "">("");
   const [memberDirectoryUsers, setMemberDirectoryUsers] = useState<MemberDirectoryApiUser[]>([]);
+  const [memberCardCounts, setMemberCardCounts] = useState<Record<number, number>>({});
   const [dueDateFilter, setDueDateFilter] = useState<"all" | "today" | "this_week" | "overdue">("all");
   const [openMultiSelectFilter, setOpenMultiSelectFilter] = useState<"country" | "intake" | null>(null);
   const [countryFilterOptions, setCountryFilterOptions] = useState<LabelOption[]>([]);
@@ -681,22 +682,44 @@ export default function BoardView() {
   useEffect(() => {
     const fetchMemberDirectory = async () => {
       try {
-        const res = await api.get("/users");
+        const [usersRes, countsRes] = await Promise.all([
+          api.get("/users"),
+          boardId ? api.get(`/boards/${boardId}/member-card-counts`) : Promise.resolve({ data: [] }),
+        ]);
         const usersPayload: unknown =
-          Array.isArray((res.data as { data?: unknown })?.data)
-            ? (res.data as { data: unknown[] }).data
-            : Array.isArray(res.data)
-            ? res.data
+          Array.isArray((usersRes.data as { data?: unknown })?.data)
+            ? (usersRes.data as { data: unknown[] }).data
+            : Array.isArray(usersRes.data)
+            ? usersRes.data
             : [];
 
         const users = (usersPayload as unknown[]).filter(
           (item): item is MemberDirectoryApiUser => typeof item === "object" && item !== null
         );
 
+        const countsPayload: unknown =
+          Array.isArray((countsRes.data as { data?: unknown })?.data)
+            ? (countsRes.data as { data: unknown[] }).data
+            : Array.isArray(countsRes.data)
+            ? countsRes.data
+            : [];
+        const counts = (countsPayload as unknown[]).reduce<Record<number, number>>((acc, item) => {
+          if (typeof item !== "object" || item === null) return acc;
+          const row = item as { user_id?: unknown; card_count?: unknown };
+          const userId = Number(row.user_id);
+          const cardCount = Number(row.card_count);
+          if (Number.isFinite(userId) && Number.isFinite(cardCount)) {
+            acc[userId] = cardCount;
+          }
+          return acc;
+        }, {});
+
         setMemberDirectoryUsers(users);
+        setMemberCardCounts(counts);
       } catch (err) {
         console.error("Failed to load users for member filter", err);
         setMemberDirectoryUsers([]);
+        setMemberCardCounts({});
       }
     };
 
@@ -1951,11 +1974,21 @@ export default function BoardView() {
         roleId: entry.roleId,
         roleName: entry.roleName,
         listCount: entry.listIds.size,
-        cardCount: entry.cardIds.size,
+        cardCount: memberCardCounts[entry.id] ?? entry.cardIds.size,
         listTitles: Array.from(entry.listTitles).sort((a, b) => a.localeCompare(b)),
       }))
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [board, memberDirectoryById]);
+  }, [board, memberDirectoryById, memberCardCounts]);
+
+  const selectedMemberFilterOption =
+    selectedMemberFilterId !== ""
+      ? memberFilterOptions.find((member) => member.id === selectedMemberFilterId) || null
+      : null;
+
+  const formatMemberFilterLabel = (member: MemberFilterOption) =>
+    `${member.name} (${member.roleName}) - ${member.cardCount} ${
+      member.cardCount === 1 ? "card" : "cards"
+    }`;
 
   useEffect(() => {
     if (selectedMemberFilterId === "") return;
@@ -2777,10 +2810,11 @@ export default function BoardView() {
                     <option value="">Select</option>
                     {memberFilterOptions.map((member) => (
                       <option key={`member-filter-option-${member.id}`} value={member.id}>
-                        {member.name} ({member.roleName})
+                        {formatMemberFilterLabel(member)}
                       </option>
                     ))}
                   </select>
+                  
                 </div>
 
                 <div>
@@ -3408,7 +3442,7 @@ export default function BoardView() {
                           <option value="">Select</option>
                           {memberFilterOptions.map((member) => (
                             <option key={`archived-member-filter-option-${member.id}`} value={member.id}>
-                              {member.name} ({member.roleName})
+                              {formatMemberFilterLabel(member)}
                             </option>
                           ))}
                         </select>
