@@ -1141,7 +1141,7 @@ class BoardCardController extends Controller
         $beforeDescription = (string) ($boardCard->description ?? '');
 
         $validated = $request->validate([
-            'description' => 'nullable|string|max:2000',
+            'description' => 'nullable|string',
         ]);
 
         $nextDescription = (string) ($validated['description'] ?? '');

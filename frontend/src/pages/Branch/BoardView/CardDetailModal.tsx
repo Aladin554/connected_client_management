@@ -1,12 +1,69 @@
 import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Editor } from "@tinymce/tinymce-react";
+import "tinymce/tinymce";
+import "tinymce/icons/default";
+import "tinymce/themes/silver";
+import "tinymce/models/dom";
+import "tinymce/plugins/autolink";
+import "tinymce/plugins/link";
+import "tinymce/plugins/lists";
+import "tinymce/skins/ui/oxide/skin.min.css";
+import "tinymce/skins/ui/oxide/content.min.css";
+import "tinymce/skins/content/default/content.min.css";
 import { Archive, BarChart3, Image as ImageIcon, Bell, Calendar, CreditCard, MessageSquare, MoreHorizontal, Paperclip, Plus, SquarePen, Star, Users, X } from "lucide-react";
 import api from "../../../api/axios";
 import "react-datepicker/dist/react-datepicker.css";
 import type { Activity, Card, CardMember, Profile } from "./types";
 import { DESCRIPTION_TEMPLATE, formatDateWithOrdinal, formatFileSize, formatISODateForInput, formatTimestamp } from "./utils";
 import { Globe, Tag, CalendarDays } from 'lucide-react';
+import { sanitizeHtml } from "../../../utils/sanitizeHtml";
 
 const LazyDatePicker = lazy(() => import("react-datepicker"));
+
+const escapeHtml = (value: string): string =>
+  value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+const hasHtmlMarkup = (value: string): boolean => /<\/?[a-z][\s\S]*>/i.test(value);
+
+const normalizeDescriptionHtml = (value: string): string =>
+  sanitizeHtml(value)
+    .replace(/\sclass="[^"]*"/gi, "")
+    .replace(/<br[^>]*>/gi, "<br>")
+    .replace(/<div[^>]*>\s*<br\s*\/?>\s*<\/div>/gi, "<br>")
+    .replace(/<p[^>]*>/gi, "")
+    .replace(/<\/p>/gi, "<br>")
+    .replace(/<div[^>]*>/gi, "")
+    .replace(/<\/div>/gi, "<br>")
+    .replace(/(<br\s*\/?>\s*)+$/gi, "")
+    .trim();
+
+const getVisibleDescriptionText = (value: string): string =>
+  value
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .trim();
+
+const descriptionToHtml = (value: string): string => {
+  const content = value.trim();
+  if (!content) return "";
+
+  if (hasHtmlMarkup(content)) {
+    return normalizeDescriptionHtml(content);
+  }
+
+  return content
+    .split("\n")
+    .map((line) => (line.trim() ? escapeHtml(line) : "&nbsp;"))
+    .join("<br>");
+};
+
 interface CardDetailModalProps {
   card: Card;
   listTitle: string;
@@ -40,9 +97,7 @@ export default function CardDetailModal({
     card.description?.trim() ? card.description : DESCRIPTION_TEMPLATE
   );
   const [savingDescription, setSavingDescription] = useState(false);
-  const descriptionTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const descriptionSaveInFlightRef = useRef(false);
-  const skipDescriptionBlurSaveRef = useRef(false);
 
   // Due Date
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -120,13 +175,6 @@ export default function CardDetailModal({
     fetchActivities();
     void fetchCardMembers();
   }, [card, profile?.role_id]);
-
-  useEffect(() => {
-    if (!isEditingDescription || !descriptionTextareaRef.current) return;
-    const el = descriptionTextareaRef.current;
-    el.style.height = "0px";
-    el.style.height = `${el.scrollHeight}px`;
-  }, [isEditingDescription, editedDescription]);
 
   useEffect(() => {
     void Promise.all([fetchCountryOptions(), fetchIntakeOptions(), fetchServiceAreaOptions()]);
@@ -436,12 +484,13 @@ export default function CardDetailModal({
     }
   };
 
-  const handleSaveDescription = async () => {
+  const handleSaveDescription = async (nextContent?: string) => {
     if (descriptionSaveInFlightRef.current) return;
 
-    const trimmed = editedDescription.trim();
-    const currentDescription = (card.description || "").trim();
-    if (trimmed === currentDescription) {
+    const normalized = normalizeDescriptionHtml(nextContent ?? editedDescription);
+    const nextDescription = getVisibleDescriptionText(normalized) ? normalized : "";
+    const currentDescription = normalizeDescriptionHtml(descriptionToHtml(card.description || ""));
+    if (nextDescription === currentDescription) {
       setIsEditingDescription(false);
       return;
     }
@@ -449,9 +498,9 @@ export default function CardDetailModal({
     descriptionSaveInFlightRef.current = true;
     setSavingDescription(true);
     try {
-      await api.put(`/cards/${card.id}/description`, { description: trimmed || null });
+      await api.put(`/cards/${card.id}/description`, { description: nextDescription || null });
       setSelectedCard((prev) =>
-        prev && prev.id === card.id ? { ...prev, description: trimmed || undefined } : prev
+        prev && prev.id === card.id ? { ...prev, description: nextDescription || undefined } : prev
       );
       await fetchBoard();
       await fetchActivities(); // Refresh activities after update
@@ -465,16 +514,8 @@ export default function CardDetailModal({
     }
   };
 
-  const handleDescriptionBlur = () => {
-    if (skipDescriptionBlurSaveRef.current) {
-      skipDescriptionBlurSaveRef.current = false;
-      return;
-    }
-    void handleSaveDescription();
-  };
-
   const openDescriptionEditor = () => {
-    setEditedDescription(card.description?.trim() ? card.description : DESCRIPTION_TEMPLATE);
+    setEditedDescription(descriptionToHtml(card.description?.trim() ? card.description : DESCRIPTION_TEMPLATE));
     setIsEditingDescription(true);
   };
 
@@ -842,35 +883,104 @@ export default function CardDetailModal({
     </>
   );
 
+  const descriptionTextFromHtml = (value: string): string => {
+    const html = descriptionToHtml(value).replace(/<br\s*\/?>/gi, "\n");
+
+    if (typeof document === "undefined") {
+      return getVisibleDescriptionText(html);
+    }
+
+    const wrapper = document.createElement("div");
+    wrapper.innerHTML = html;
+    return (wrapper.textContent || "").trim();
+  };
+
+  const collectFormattedDescriptionSegments = (value: string) => {
+    if (typeof document === "undefined") return [];
+
+    const wrapper = document.createElement("div");
+    wrapper.innerHTML = descriptionToHtml(value);
+    const segments: { text: string; bold: boolean; italic: boolean; underline: boolean }[] = [];
+
+    const walk = (node: Node, format = { bold: false, italic: false, underline: false }) => {
+      if (node.nodeType === Node.TEXT_NODE) {
+        const text = node.textContent?.replace(/\s+/g, " ").trim();
+        if (text) {
+          segments.push({ text, ...format });
+        }
+        return;
+      }
+
+      if (node.nodeType !== Node.ELEMENT_NODE) return;
+
+      const element = node as HTMLElement;
+      const tagName = element.tagName.toLowerCase();
+      const style = element.getAttribute("style") || "";
+      const nextFormat = {
+        bold: format.bold || tagName === "b" || tagName === "strong" || /font-weight:\s*(bold|[6-9]00)/i.test(style),
+        italic: format.italic || tagName === "i" || tagName === "em" || /font-style:\s*italic/i.test(style),
+        underline: format.underline || tagName === "u" || /text-decoration[^;]*underline/i.test(style),
+      };
+
+      Array.from(element.childNodes).forEach((child) => walk(child, nextFormat));
+    };
+
+    Array.from(wrapper.childNodes).forEach((child) => walk(child));
+    return segments;
+  };
+
+  const getFormattingChanges = (before: string, after: string) => {
+    const beforeSegments = collectFormattedDescriptionSegments(before);
+    const afterSegments = collectFormattedDescriptionSegments(after);
+
+    return afterSegments
+      .map((afterSegment) => {
+        const beforeSegment = beforeSegments.find((segment) => segment.text === afterSegment.text);
+        if (!beforeSegment) return null;
+
+        const changes = [
+          afterSegment.bold && !beforeSegment?.bold ? "Bold" : null,
+          afterSegment.italic && !beforeSegment?.italic ? "Italic" : null,
+          afterSegment.underline && !beforeSegment?.underline ? "Underline" : null,
+        ].filter((change): change is string => Boolean(change));
+
+        return changes.length > 0 ? { ...afterSegment, changes } : null;
+      })
+      .filter((change): change is { text: string; bold: boolean; italic: boolean; underline: boolean; changes: string[] } =>
+        Boolean(change)
+      );
+  };
+
   const renderDescriptionChangeDetails = (details?: string) => {
     const parsed = parseDescriptionChangeDetails(details);
     if (!parsed) return null;
 
-    const diff = computeInlineDiff(parsed.before, parsed.after);
+    const previousHtml = descriptionToHtml(parsed.before);
+    const presentHtml = descriptionToHtml(parsed.after);
 
     return (
       <div className="space-y-2">
         <div className="rounded-md border border-rose-200 bg-rose-50 p-2.5">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-rose-700">Before</p>
-          <p className="mt-1 whitespace-pre-wrap break-words text-sm text-rose-900">
-            {renderDescriptionDiffText(
-              diff.prefix,
-              diff.beforeChanged,
-              diff.suffix,
-              "bg-rose-200/80 text-rose-900"
-            )}
-          </p>
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-rose-700">Previous</p>
+          {previousHtml ? (
+            <div
+              className="mt-1 break-words text-sm leading-relaxed text-rose-900 [&_p]:m-0 [&_div]:m-0 [&_br]:block [&_a]:underline"
+              dangerouslySetInnerHTML={{ __html: previousHtml }}
+            />
+          ) : (
+            <p className="mt-1 text-sm text-rose-900">[empty]</p>
+          )}
         </div>
         <div className="rounded-md border border-emerald-200 bg-emerald-50 p-2.5">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">After</p>
-          <p className="mt-1 whitespace-pre-wrap break-words text-sm text-emerald-900">
-            {renderDescriptionDiffText(
-              diff.prefix,
-              diff.afterChanged,
-              diff.suffix,
-              "bg-emerald-200/90 text-emerald-900"
-            )}
-          </p>
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">Present</p>
+          {presentHtml ? (
+            <div
+              className="mt-1 break-words text-sm leading-relaxed text-emerald-900 [&_p]:m-0 [&_div]:m-0 [&_br]:block [&_a]:underline"
+              dangerouslySetInnerHTML={{ __html: presentHtml }}
+            />
+          ) : (
+            <p className="mt-1 text-sm text-emerald-900">[empty]</p>
+          )}
         </div>
       </div>
     );
@@ -1126,9 +1236,6 @@ export default function CardDetailModal({
                 {isEditingDescription ? (
                   <div className="flex gap-3">
                     <button
-                      onMouseDown={() => {
-                        skipDescriptionBlurSaveRef.current = true;
-                      }}
                       onClick={() => {
                         setIsEditingDescription(false);
                         setEditedDescription(
@@ -1141,10 +1248,7 @@ export default function CardDetailModal({
                       Cancel
                     </button>
                     <button
-                      onMouseDown={() => {
-                        skipDescriptionBlurSaveRef.current = true;
-                      }}
-                      onClick={handleSaveDescription}
+                      onClick={() => void handleSaveDescription()}
                       className={`px-5 py-1.5 text-sm font-bold rounded text-white ${
                         savingDescription ? "bg-indigo-400 cursor-not-allowed" : "bg-indigo-600 hover:bg-indigo-700"
                       }`}
@@ -1166,24 +1270,39 @@ export default function CardDetailModal({
 
               {isEditingDescription ? (
                 <div className="p-5">
-                  <textarea
-                    ref={descriptionTextareaRef}
+                  <Editor
+                    disabled={savingDescription}
                     value={editedDescription}
-                    onChange={(e) => setEditedDescription(e.target.value)}
-                    onBlur={handleDescriptionBlur}
-                    className="w-full border border-gray-300 rounded-lg px-4 py-3 text-sm resize-none overflow-hidden min-h-[180px] focus:outline-none focus:ring-2 focus:ring-indigo-400 transition"
-                    placeholder="Fill student profile details..."
-                    autoFocus
+                    onEditorChange={(content) => setEditedDescription(content)}
+                    onBlur={(_event, editor) => void handleSaveDescription(editor.getContent())}
+                    init={{
+                      license_key: "gpl",
+                      height: 300,
+                      menubar: false,
+                      branding: false,
+                      promotion: false,
+                      statusbar: false,
+                      skin: false,
+                      content_css: false,
+                      plugins: ["autolink", "link", "lists"],
+                      toolbar:
+                        "undo redo | fontfamily fontsize | bold italic underline | forecolor backcolor | bullist numlist | link removeformat",
+                      font_family_formats:
+                        "Arial=arial,helvetica,sans-serif; Times New Roman=times new roman,times,serif; Georgia=georgia,palatino,serif; Verdana=verdana,geneva,sans-serif; Courier New=courier new,courier,monospace",
+                      font_size_formats: "12px 14px 16px 18px 24px 36px",
+                      content_style:
+                        "body { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; color: #1f2937; line-height: 1.6; } p { margin: 0 0 8px; }",
+                    }}
                   />
                 </div>
               ) : (
                 <div
                   onClick={openDescriptionEditor}
-                  className="px-5 py-5 text-sm text-gray-800 space-y-2 leading-relaxed cursor-pointer hover:bg-white/40 transition"
+                  className="px-5 py-5 text-sm text-gray-800 leading-relaxed cursor-pointer hover:bg-white/40 transition [&_p]:m-0 [&_div]:m-0 [&_br]:block [&_a]:text-indigo-600 [&_a]:underline"
                   title="Click to edit description"
                 >
                   {card.description && card.description.trim() ? (
-                    card.description.split("\n").map((line, i) => <p key={i}>{line}</p>)
+                    <div dangerouslySetInnerHTML={{ __html: descriptionToHtml(card.description) }} />
                   ) : (
                     DESCRIPTION_TEMPLATE.split("\n").map((line, i) => (
                       <p key={i} className="text-gray-500">
