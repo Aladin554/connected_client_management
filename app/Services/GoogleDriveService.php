@@ -351,26 +351,43 @@ class GoogleDriveService
             return $existing;
         }
 
+        $bodyStream = null;
+        $sourceHandle = null;
+
         try {
             $token = $useOAuth ? $this->oauthAccessToken() : $this->accessToken();
             $mimeType = mime_content_type($localPath) ?: 'application/octet-stream';
 
             $boundary = 'drive-' . bin2hex(random_bytes(16));
             $metadata = json_encode(['name' => $name, 'parents' => [$parentFolderId]]);
-            $body = "--{$boundary}\r\n"
-                . "Content-Type: application/json; charset=UTF-8\r\n\r\n"
-                . $metadata . "\r\n"
-                . "--{$boundary}\r\n"
-                . "Content-Type: {$mimeType}\r\n\r\n"
-                . file_get_contents($localPath) . "\r\n"
-                . "--{$boundary}--";
+
+            // Stream the multipart body through a temp resource (spills to
+            // disk past 2MB) instead of buffering the whole file as one PHP
+            // string - the largest template files run tens of MB, which blew
+            // PHP's 128MB memory limit in production (file_get_contents()
+            // plus the string concatenation needed two full copies in memory
+            // at once).
+            $bodyStream = fopen('php://temp/maxmemory:2097152', 'r+');
+            fwrite($bodyStream, "--{$boundary}\r\n");
+            fwrite($bodyStream, "Content-Type: application/json; charset=UTF-8\r\n\r\n");
+            fwrite($bodyStream, $metadata . "\r\n");
+            fwrite($bodyStream, "--{$boundary}\r\n");
+            fwrite($bodyStream, "Content-Type: {$mimeType}\r\n\r\n");
+
+            $sourceHandle = fopen($localPath, 'rb');
+            stream_copy_to_stream($sourceHandle, $bodyStream);
+            fclose($sourceHandle);
+            $sourceHandle = null;
+
+            fwrite($bodyStream, "\r\n--{$boundary}--");
+            rewind($bodyStream);
 
             // Default 30s HTTP timeout is too short for the largest template
             // files (scanned PSDs/PDFs run tens of MB) - this runs in a
             // background job, so a generous timeout costs nothing.
             $response = Http::withToken($token)
                 ->timeout(300)
-                ->withBody($body, "multipart/related; boundary={$boundary}")
+                ->withBody($bodyStream, "multipart/related; boundary={$boundary}")
                 ->post(self::UPLOAD_URL . '/files?uploadType=multipart&supportsAllDrives=true&fields=id%2CwebViewLink')
                 ->throw();
 
@@ -391,6 +408,13 @@ class GoogleDriveService
             ]);
 
             return null;
+        } finally {
+            if (is_resource($sourceHandle)) {
+                fclose($sourceHandle);
+            }
+            if (is_resource($bodyStream)) {
+                fclose($bodyStream);
+            }
         }
     }
 
