@@ -74,7 +74,11 @@ jobs:
           tar -xzf "$HOME/connected_deploy_incoming/source.tgz" -C "$TEMP_DIR"
 
           # Preserve the live .env - it is never shipped through the repo.
-          rsync -a --delete --exclude='.env' "$TEMP_DIR"/ "$LIVE_DIR"/
+          # storage/app/google holds the Drive service account key - it's
+          # gitignored (never part of the source archive) and uploaded to the
+          # server once, out of band. Without this exclude, --delete wipes it
+          # on every deploy since it never exists in $TEMP_DIR.
+          rsync -a --delete --exclude='.env' --exclude='storage/app/google' "$TEMP_DIR"/ "$LIVE_DIR"/
           rm -rf "$TEMP_DIR"
 
           cd "$LIVE_DIR"
