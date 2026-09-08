@@ -85,6 +85,16 @@ jobs:
           printf '%s\n' "$SUDO_PASSWORD" | sudo -S docker compose up -d --build --remove-orphans
 
           APP_CID="$(printf '%s\n' "$SUDO_PASSWORD" | sudo -S docker compose ps -q app)"
+
+          # storage/ is backed by a long-lived named Docker volume, so a
+          # rebuilt image's copy of storage/app/private/drive-templates never
+          # actually reaches the running container - the old volume content
+          # shadows it. Push the current code's copy in directly on every
+          # deploy so newly added template files always show up live.
+          printf '%s\n' "$SUDO_PASSWORD" | sudo -S docker exec "$APP_CID" mkdir -p /var/www/html/storage/app/private/drive-templates
+          printf '%s\n' "$SUDO_PASSWORD" | sudo -S docker cp "$LIVE_DIR/storage/app/private/drive-templates/." "$APP_CID:/var/www/html/storage/app/private/drive-templates"
+          printf '%s\n' "$SUDO_PASSWORD" | sudo -S docker exec "$APP_CID" chown -R www-data:www-data /var/www/html/storage/app/private/drive-templates
+
           printf '%s\n' "$SUDO_PASSWORD" | sudo -S docker exec "$APP_CID" php artisan migrate --force --no-interaction
           printf '%s\n' "$SUDO_PASSWORD" | sudo -S docker exec "$APP_CID" php artisan config:clear
           printf '%s\n' "$SUDO_PASSWORD" | sudo -S docker exec "$APP_CID" php artisan config:cache
