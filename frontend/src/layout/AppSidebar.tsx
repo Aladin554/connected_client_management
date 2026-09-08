@@ -72,6 +72,13 @@ const AppSidebar: React.FC = () => {
             { name: "Intake Labels", path: "/dashboard/intake-labels" },
           ],
         },
+        {
+          name: "Integrations",
+          icon: <PlugInIcon />,
+          subItems: [
+            { name: "Google Drive", path: "/dashboard/google-drive-settings" },
+          ],
+        },
       ]
     : []),
   // {

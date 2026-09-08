@@ -1,2 +1,7 @@
 *
 !.gitignore
+
+# Template files auto-uploaded into new cards' Drive folders (shipped
+# assets, not user-uploaded private data) - see config/drive_folder_template_files.php.
+!drive-templates/
+!drive-templates/**

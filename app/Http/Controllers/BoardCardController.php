@@ -11,6 +11,10 @@ use App\Models\CountryLabel;
 use App\Models\IntakeLabel;
 use App\Models\ServiceArea;
 use App\Models\User;
+use App\Jobs\BuildCardDriveFolderStructure;
+use App\Jobs\CreateDriveSubfolderTree;
+use App\Jobs\UploadDriveTemplateFiles;
+use App\Services\GoogleDriveService;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -20,6 +24,265 @@ use Carbon\Carbon;
 
 class BoardCardController extends Controller
 {
+    public function __construct(private readonly GoogleDriveService $driveService)
+    {
+    }
+
+    public const CLIENT_UPLOADS_SUBFOLDER = 'Client Uploaded Files';
+
+    private function cardDriveFolderName(BoardCard $card): string
+    {
+        $invoice = $card->invoice ?: ('Card #' . $card->id);
+        $fullName = trim(($card->first_name ?? '') . ' ' . ($card->last_name ?? ''));
+
+        return $fullName !== '' ? $invoice . ' ' . $fullName : $invoice;
+    }
+
+    /**
+     * @return bool true when this call just created the folder (and dispatched
+     *   BuildCardDriveFolderStructure to build the rest in the background);
+     *   false when the card already had one. Callers use this to avoid
+     *   racing that background job with their own synchronous subfolder/sync
+     *   calls, which would otherwise create duplicate top-level subfolders
+     *   (e.g. two "Client Uploaded Files") if the card is touched again -
+     *   opened, contact email changed, members changed - before the job
+     *   finishes building the structure itself.
+     */
+    private function ensureCardDriveFolder(BoardCard $card): bool
+    {
+        if ($card->google_drive_folder_id) {
+            return false;
+        }
+
+        // Per-card Shared Drive mode (OAuth): each card gets its own, brand
+        // new Shared Drive instead of a folder inside a shared root. This is
+        // fixed at creation time (google_drive_own_shared_drive), so later
+        // admin-setting changes never affect an already-created card.
+        if ($this->driveService->isOAuthEnabled()) {
+            $drive = $this->driveService->createSharedDrive($this->cardDriveFolderName($card));
+            if (!$drive) {
+                return false;
+            }
+
+            // Give the brand new Shared Drive a moment before hitting it with
+            // more writes - immediately following creation with a burst of
+            // requests against a resource with zero history appears to be
+            // what triggers Google's abuse detection into deleting the drive
+            // a few minutes later (observed: drives with heavy, fast API
+            // activity right after creation vanished; an established drive
+            // handling the same volume of writes was unaffected).
+            sleep(3);
+
+            // A brand new Shared Drive has NO members at all - not even its
+            // creator - until permissions are explicitly granted. Google
+            // appears to garbage-collect member-less Shared Drives after a
+            // few minutes, so at least one organizer (every admin here) must
+            // be added synchronously, right now, before anything else -
+            // waiting for the background job to do this later is too slow
+            // and loses the drive. One at a time, paced, for the same reason
+            // as the sleep() above - avoid a burst of writes right after
+            // creating a drive with no history.
+            $adminEmails = User::whereIn('role_id', [1, 2])->pluck('email')->filter()->unique();
+            foreach ($adminEmails as $adminEmail) {
+                $this->driveService->addSharedDriveMember($drive['id'], $adminEmail, 'organizer');
+                usleep(500000);
+            }
+
+            $card->update([
+                'google_drive_folder_id' => $drive['id'],
+                'google_drive_folder_link' => $drive['link'],
+                'google_drive_synced_at' => now(),
+                'google_drive_own_shared_drive' => true,
+            ]);
+
+            BuildCardDriveFolderStructure::dispatch($card);
+            return true;
+        }
+
+        if (!$this->driveService->isEnabled()) {
+            return false;
+        }
+
+        // Card folders go directly under the configured root - no per-board
+        // subfolder layer, so there's nothing here that can go stale/orphaned
+        // if the root folder is ever recreated.
+        //
+        // This is the ONLY Drive API call made synchronously during card
+        // creation. Everything else - the Admission/Client Uploaded/Visa
+        // Specific subfolders, the ~200-folder visa checklist template
+        // underneath them, and sharing - happens in the background via
+        // BuildCardDriveFolderStructure, so creating a card stays fast
+        // regardless of how large that template is.
+        $folder = $this->driveService->createFolder($this->cardDriveFolderName($card));
+        if (!$folder) {
+            return false;
+        }
+
+        $card->update([
+            'google_drive_folder_id' => $folder['id'],
+            'google_drive_folder_link' => $folder['link'],
+            'google_drive_synced_at' => now(),
+        ]);
+
+        BuildCardDriveFolderStructure::dispatch($card);
+
+        return true;
+    }
+
+    /**
+     * Backfill the "Client Uploaded Files" subfolder for cards whose Drive
+     * folder was created before that subfolder was tracked separately.
+     */
+    private function ensureClientUploadsSubfolder(BoardCard $card): void
+    {
+        if ($card->google_drive_client_uploads_folder_id || !$card->google_drive_folder_id) {
+            return;
+        }
+
+        $useOAuth = (bool) $card->google_drive_own_shared_drive;
+        if (!$useOAuth && !$this->driveService->isEnabled()) {
+            return;
+        }
+
+        $subfolder = $this->driveService->createFolder(
+            self::CLIENT_UPLOADS_SUBFOLDER,
+            $card->google_drive_folder_id,
+            $useOAuth
+        );
+        if (!$subfolder) {
+            return;
+        }
+
+        $card->update([
+            'google_drive_client_uploads_folder_id' => $subfolder['id'],
+            'google_drive_client_uploads_folder_link' => $subfolder['link'],
+        ]);
+
+        $children = config('drive_folder_template.' . self::CLIENT_UPLOADS_SUBFOLDER, []);
+        if (!empty($children)) {
+            CreateDriveSubfolderTree::dispatch($subfolder['id'], $children, $useOAuth);
+        }
+
+        UploadDriveTemplateFiles::dispatch($card);
+    }
+
+    /**
+     * Share the card's Drive folder(s) according to role.
+     *
+     * Normal mode (folder inside the shared root): admins/superadmins get
+     * the full card folder; everyone else (restricted-role members, and
+     * always the contact email) only gets the "Client Uploaded Files"
+     * subfolder - never the parent - so they can't navigate up into
+     * Admission/Visa-specific files.
+     *
+     * Per-card Shared Drive mode (OAuth): staff become real members of this
+     * card's own dedicated Shared Drive (that's what unlocks local
+     * Drive-for-Desktop sync + adding files from a synced folder); the
+     * contact email deliberately does NOT, since they only need to add files
+     * via the Drive website, not from a local folder:
+     *  - Every superadmin/admin (role 1/2) gets "organizer" automatically,
+     *    by role alone - they don't need to be added as a card member first.
+     *  - Subadmin/counsellor (role 3/4) get "fileOrganizer", but only on
+     *    cards an admin explicitly added them to as a member. Since Shared
+     *    Drive membership can't be folder-scoped, this does mean they can
+     *    browse Admission/Visa Specific Files too, not just Client Uploaded.
+     *  - The contact email is kept OFF the drive membership entirely and
+     *    only gets an item-level "writer" permission on just the "Client
+     *    Uploaded Files" subfolder - so they can't see Admission/Visa
+     *    Specific Files at all (not even read-only), and their write access
+     *    only works via the Drive website (not local sync, since they're
+     *    not a drive member).
+     *
+     * Public so the background BuildCardDriveFolderStructure job can call it
+     * once the card's Drive folder(s) have been created.
+     */
+    public function syncCardDriveAccess(BoardCard $card): void
+    {
+        $useOAuth = (bool) $card->google_drive_own_shared_drive;
+        if (!$card->google_drive_folder_id || (!$useOAuth && !$this->driveService->isEnabled())) {
+            return;
+        }
+
+        $this->ensureClientUploadsSubfolder($card);
+
+        $members = $card->members()->get(['users.id', 'users.email', 'users.role_id']);
+
+        $fullAccessEmails = $members
+            ->filter(fn ($member) => $this->canBypassCardMemberVisibility($member))
+            ->pluck('email')
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+
+        $restrictedMemberEmails = $members
+            ->filter(fn ($member) => !$this->canBypassCardMemberVisibility($member))
+            ->pluck('email')
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+
+        if ($useOAuth) {
+            // Only staff (admins auto-access + explicitly added members) become
+            // real Shared Drive members - that's what local Drive-for-Desktop
+            // sync/write needs. The contact email does NOT need local sync
+            // (they just add files via the Drive website), so they're kept
+            // OFF the drive membership entirely and only get an item-level
+            // "writer" permission on "Client Uploaded Files" - meaning they
+            // can't see Admission/Visa Specific Files at all, not even read-only.
+            $allAdminEmails = User::whereIn('role_id', [1, 2])->pluck('email')->filter()->unique();
+
+            // The OAuth-connected account itself must always stay "wanted" -
+            // it's the drive's creator/organizer but isn't necessarily a row
+            // in our own users table, so it can be missing from
+            // $allAdminEmails. Omitting it here would make the sync below
+            // remove the connected account's own access, which immediately
+            // orphans the drive (confirmed: this is what was silently
+            // deleting per-card Shared Drives, not any Google-side abuse
+            // detection).
+            $connectedEmail = $this->driveService->getOAuthConnectedEmail();
+
+            $emailToRole = $allAdminEmails->mapWithKeys(fn ($email) => [$email => 'organizer'])
+                ->union(collect($fullAccessEmails)->mapWithKeys(fn ($email) => [$email => 'organizer']))
+                ->union(collect($restrictedMemberEmails)->mapWithKeys(fn ($email) => [$email => 'fileOrganizer']))
+                ->union($connectedEmail ? [$connectedEmail => 'organizer'] : [])
+                ->all();
+
+            $this->driveService->syncSharedDriveMembers($card->google_drive_folder_id, $emailToRole);
+
+            if ($card->google_drive_client_uploads_folder_id) {
+                $this->driveService->syncFolderMembers(
+                    $card->google_drive_client_uploads_folder_id,
+                    $card->contact_email ? [$card->contact_email] : [],
+                    'writer',
+                    true
+                );
+            }
+        } else {
+            $this->driveService->syncFolderMembers($card->google_drive_folder_id, $fullAccessEmails);
+
+            $clientUploadsEmails = collect($restrictedMemberEmails)
+                ->merge([$card->contact_email])
+                ->filter()
+                ->unique()
+                ->values()
+                ->all();
+
+            // Full-access members already see this subfolder by inheritance from
+            // the parent share above; only the client-uploads-only people need
+            // an explicit permission entry here.
+            if ($card->google_drive_client_uploads_folder_id) {
+                $this->driveService->syncFolderMembers(
+                    $card->google_drive_client_uploads_folder_id,
+                    $clientUploadsEmails
+                );
+            }
+        }
+
+        $card->update(['google_drive_synced_at' => now()]);
+    }
+
     private function isCommissionBoardName(?string $name): bool
     {
         $normalized = strtolower(trim((string) $name));
@@ -586,24 +849,26 @@ class BoardCardController extends Controller
         ]);
 
         $validated = $request->validate([
-            'invoice'      => ['required', 'string', 'max:255', Rule::unique('board_cards', 'invoice')],
-            'first_name'   => 'nullable|string|max:255',
-            'last_name'    => 'nullable|string|max:255',
-            'description'  => 'nullable|string',
-            'position'     => 'nullable|integer|min:0',
-            'checked'      => 'nullable|boolean',
+            'invoice'       => ['required', 'string', 'max:255', Rule::unique('board_cards', 'invoice')],
+            'first_name'    => 'nullable|string|max:255',
+            'last_name'     => 'nullable|string|max:255',
+            'contact_email' => 'nullable|email|max:255',
+            'description'   => 'nullable|string',
+            'position'      => 'nullable|integer|min:0',
+            'checked'       => 'nullable|boolean',
         ]);
 
         // Auto position
         $maxPosition = $boardList->cards()->max('position') ?? 0;
         try {
             $card = $boardList->cards()->create([
-                'invoice'     => $validated['invoice'],
-                'first_name'  => $validated['first_name'] ?? null,
-                'last_name'   => $validated['last_name'] ?? null,
-                'description' => $validated['description'] ?? null,
-                'position'    => $validated['position'] ?? $maxPosition + 10000,
-                'checked'     => $validated['checked'] ?? false,
+                'invoice'       => $validated['invoice'],
+                'first_name'    => $validated['first_name'] ?? null,
+                'last_name'     => $validated['last_name'] ?? null,
+                'contact_email' => $validated['contact_email'] ?? null,
+                'description'   => $validated['description'] ?? null,
+                'position'      => $validated['position'] ?? $maxPosition + 10000,
+                'checked'       => $validated['checked'] ?? false,
             ]);
         } catch (QueryException $exception) {
             if ($this->isDuplicateInvoiceException($exception)) {
@@ -626,7 +891,17 @@ class BoardCardController extends Controller
             report($exception);
         }
 
-        return response()->json($card, 201);
+        try {
+            // Only creates the card's own folder synchronously; subfolders and
+            // sharing happen in the background (see BuildCardDriveFolderStructure)
+            // so creating a card doesn't wait on the Drive API more than once.
+            $this->ensureCardDriveFolder($card);
+        } catch (\Throwable $exception) {
+            // Card was created successfully; Drive folder creation is best-effort.
+            report($exception);
+        }
+
+        return response()->json($card->fresh(), 201);
     }
 
     public function show(BoardList $boardList, BoardCard $boardCard)
@@ -667,6 +942,7 @@ class BoardCardController extends Controller
             'invoice'       => ['sometimes', 'filled', 'string', 'max:255', Rule::unique('board_cards', 'invoice')->ignore($boardCard->id)],
             'first_name'    => 'sometimes|nullable|string|max:255',
             'last_name'     => 'sometimes|nullable|string|max:255',
+            'contact_email' => 'sometimes|nullable|email|max:255',
             'description'   => 'sometimes|nullable|string',
             'position'      => 'sometimes|integer|min:0',
             'checked'       => 'sometimes|boolean',
@@ -709,6 +985,7 @@ class BoardCardController extends Controller
         $beforeInvoice = (string) ($boardCard->invoice ?? '');
         $beforeFirstName = (string) ($boardCard->first_name ?? '');
         $beforeLastName = (string) ($boardCard->last_name ?? '');
+        $beforeContactEmail = (string) ($boardCard->contact_email ?? '');
         $beforeDescription = (string) ($boardCard->description ?? '');
 
         try {
@@ -743,10 +1020,32 @@ class BoardCardController extends Controller
             }
         }
 
+        if (array_key_exists('contact_email', $validated)) {
+            $afterContactEmail = (string) ($boardCard->contact_email ?? '');
+            if (trim($beforeContactEmail) !== trim($afterContactEmail)) {
+                $changeLines[] = 'Contact email: ' . $this->formatActivityChange($beforeContactEmail, $afterContactEmail, 120);
+            }
+        }
+
         if (array_key_exists('description', $validated)) {
             $afterDescription = (string) ($boardCard->description ?? '');
             if (trim($beforeDescription) !== trim($afterDescription)) {
                 $changeLines[] = 'Description: ' . $this->formatActivityChange($beforeDescription, $afterDescription, null);
+            }
+        }
+
+        if (array_key_exists('contact_email', $validated)) {
+            try {
+                // If this call just created the folder, BuildCardDriveFolderStructure
+                // is already dispatched and will build the structure + call
+                // syncCardDriveAccess itself once done - calling it again here
+                // would race it and create duplicate top-level subfolders.
+                if (!$this->ensureCardDriveFolder($boardCard)) {
+                    $this->syncCardDriveAccess($boardCard);
+                }
+            } catch (\Throwable $exception) {
+                // Card update succeeded; Drive permission sync is best-effort.
+                report($exception);
             }
         }
 
@@ -1367,6 +1666,16 @@ class BoardCardController extends Controller
 
         $boardCard->members()->sync($requestedIds->all());
 
+        try {
+            // See the contact_email branch above for why this is guarded.
+            if (!$this->ensureCardDriveFolder($boardCard)) {
+                $this->syncCardDriveAccess($boardCard);
+            }
+        } catch (\Throwable $exception) {
+            // Member update succeeded; Drive permission sync is best-effort.
+            report($exception);
+        }
+
         $addedIds = $requestedIds->diff($existingMemberIds)->values()->all();
         $removedIds = $existingMemberIds->diff($requestedIds)->values()->all();
         $visibilityChanged = $requestedIds->isEmpty() !== $existingMemberIds->isEmpty();
@@ -1410,6 +1719,71 @@ class BoardCardController extends Controller
 
         return response()->json([
             'message' => 'Card members updated successfully',
+            'members' => $members,
+        ]);
+    }
+
+    // GET Google Drive folder info for a card (lazily creates the folder if missing)
+    public function driveInfo(BoardCard $boardCard)
+    {
+        $this->assertCanReadBoardCard($boardCard);
+
+        $alreadyHasOwnDrive = (bool) $boardCard->google_drive_own_shared_drive;
+        if (!$this->driveService->isEnabled() && !$this->driveService->isOAuthEnabled() && !$alreadyHasOwnDrive) {
+            return response()->json([
+                'enabled' => false,
+                'folder_link' => null,
+                'members' => [],
+            ]);
+        }
+
+        try {
+            // Same race as above: if this request is the one that creates the
+            // folder, BuildCardDriveFolderStructure already owns building the
+            // rest of the structure in the background - don't duplicate it by
+            // also creating "Client Uploaded Files" synchronously here just
+            // because the job hasn't reached it yet.
+            if (!$this->ensureCardDriveFolder($boardCard)) {
+                $this->ensureClientUploadsSubfolder($boardCard);
+            }
+        } catch (\Throwable $exception) {
+            report($exception);
+        }
+
+        $boardCard->refresh();
+
+        $members = $boardCard->members()
+            ->select('users.id', 'users.first_name', 'users.last_name', 'users.email')
+            ->orderBy('users.first_name')
+            ->orderBy('users.last_name')
+            ->get();
+
+        if ($boardCard->google_drive_own_shared_drive) {
+            // Per-card Shared Drive: everyone with access is a real Drive
+            // member of this one dedicated drive, so there's no separate
+            // "client_uploads only" link to hand out - the main link IS
+            // their access.
+            $scope = 'full';
+            $scopedFolderLink = $boardCard->google_drive_folder_link;
+        } else {
+            // Admins/superadmins get the full card folder (all three subfolders).
+            // Everyone else only gets the "Client Uploaded Files" subfolder, since
+            // Admission/Visa-specific files may not be meant for them to browse.
+            $isAdmin = $this->canBypassCardMemberVisibility(Auth::user());
+            $scope = $isAdmin ? 'full' : 'client_uploads';
+            $scopedFolderLink = $isAdmin
+                ? $boardCard->google_drive_folder_link
+                : ($boardCard->google_drive_client_uploads_folder_link ?: $boardCard->google_drive_folder_link);
+        }
+
+        return response()->json([
+            'enabled' => true,
+            'folder_id' => $boardCard->google_drive_folder_id,
+            'folder_link' => $scopedFolderLink,
+            'scope' => $scope,
+            'error' => $boardCard->google_drive_folder_id ? null : $this->driveService->getLastError(),
+            'synced_at' => $boardCard->google_drive_synced_at,
+            'contact_email' => $boardCard->contact_email,
             'members' => $members,
         ]);
     }

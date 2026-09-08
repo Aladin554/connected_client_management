@@ -35,4 +35,21 @@ return [
         ],
     ],
 
+    'google_drive' => [
+        // Path to the Google Cloud service account JSON key file (secret; stays in .env,
+        // not the admin panel). Everything else (enabled, mode, folder IDs, default role)
+        // is managed from the admin panel and stored in the google_drive_settings table
+        // — see App\Models\GoogleDriveSetting.
+        'credentials_path' => env('GOOGLE_DRIVE_CREDENTIALS_PATH'),
+
+        // OAuth 2.0 client used ONLY for the optional "per-card Shared Drive"
+        // mode - a real Google account must authorize this (Shared Drive
+        // creation/membership can't be done by an external service account).
+        // Create this as an "OAuth client ID" (Web application) in the same
+        // Google Cloud project as the service account.
+        'oauth_client_id' => env('GOOGLE_OAUTH_CLIENT_ID'),
+        'oauth_client_secret' => env('GOOGLE_OAUTH_CLIENT_SECRET'),
+        'oauth_redirect_uri' => env('GOOGLE_OAUTH_REDIRECT_URI'),
+    ],
+
 ];

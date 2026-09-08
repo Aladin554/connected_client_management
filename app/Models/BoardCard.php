@@ -25,6 +25,7 @@ class BoardCard extends Model
         'first_name',
         'last_name',
         'invoice',
+        'contact_email',
         'country_label_id',
         'country_label_ids',
         'intake_label_id',
@@ -34,6 +35,12 @@ class BoardCard extends Model
         'payment_done',
         'dependant_payment_done',
         'is_archived',
+        'google_drive_folder_id',
+        'google_drive_folder_link',
+        'google_drive_client_uploads_folder_id',
+        'google_drive_client_uploads_folder_link',
+        'google_drive_synced_at',
+        'google_drive_own_shared_drive',
     ];
 
     /**
@@ -53,6 +60,8 @@ class BoardCard extends Model
         'payment_done' => 'boolean',
         'dependant_payment_done' => 'boolean',
         'is_archived' => 'boolean',
+        'google_drive_synced_at' => 'datetime',
+        'google_drive_own_shared_drive' => 'boolean',
     ];
 
     /**

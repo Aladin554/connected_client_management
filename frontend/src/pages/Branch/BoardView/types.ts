@@ -5,6 +5,7 @@ export interface Card {
   invoice?: string;
   first_name?: string;
   last_name?: string;
+  contact_email?: string | null;
   description?: string;
   checked: boolean;
   position: number;
@@ -20,6 +21,9 @@ export interface Card {
   dependant_payment_done?: boolean;
   is_archived?: boolean;
   members?: CardMember[];
+  google_drive_folder_id?: string | null;
+  google_drive_folder_link?: string | null;
+  google_drive_client_uploads_folder_link?: string | null;
 }
 
 export interface List {

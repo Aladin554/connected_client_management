@@ -219,6 +219,7 @@ export default function BoardView() {
   const [newCardInvoice, setNewCardInvoice] = useState("");
   const [newCardFirstName, setNewCardFirstName] = useState("");
   const [newCardLastName, setNewCardLastName] = useState("");
+  const [newCardContactEmail, setNewCardContactEmail] = useState("");
   const [creatingCardListId, setCreatingCardListId] = useState<number | null>(null);
   const [editingListId, setEditingListId] = useState<number | null>(null);
   const [editedListTitle, setEditedListTitle] = useState("");
@@ -1429,10 +1430,17 @@ export default function BoardView() {
       return;
     }
 
+    const trimmedContactEmail = newCardContactEmail.trim();
+    if (trimmedContactEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedContactEmail)) {
+      alert("Please enter a valid email address.");
+      return;
+    }
+
     const payload = {
       invoice: newCardInvoice.trim(),
       first_name: newCardFirstName.trim() || undefined,
       last_name: newCardLastName.trim() || undefined,
+      contact_email: trimmedContactEmail || undefined,
     };
 
     setCreatingCardListId(listId);
@@ -1447,12 +1455,14 @@ export default function BoardView() {
       setNewCardInvoice("");
       setNewCardFirstName("");
       setNewCardLastName("");
+      setNewCardContactEmail("");
       setActiveCardListId(null);
       await fetchBoard();
     } catch (err: any) {
       console.error("Create card failed", err);
       const apiMessage =
         err?.response?.data?.errors?.invoice?.[0] ||
+        err?.response?.data?.errors?.contact_email?.[0] ||
         err?.response?.data?.message ||
         (err?.response?.status === 403
           ? "You do not have permission to create cards in this list."
@@ -1534,6 +1544,7 @@ export default function BoardView() {
     setNewCardInvoice("");
     setNewCardFirstName("");
     setNewCardLastName("");
+    setNewCardContactEmail("");
     setActiveCardListId(null);
   };
 
@@ -2477,6 +2488,15 @@ export default function BoardView() {
                   className="w-full border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-400 outline-none"
                 />
               </div>
+
+              <input
+                type="email"
+                value={newCardContactEmail}
+                onChange={(e) => setNewCardContactEmail(e.target.value)}
+                placeholder="Email (for Google Drive folder access)"
+                disabled={creatingCardListId === list.id}
+                className="w-full border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-400 outline-none mb-3"
+              />
 
               <div className="flex gap-3 mt-4">
                 <button

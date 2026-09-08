@@ -58,6 +58,8 @@ const CountryLabels = lazy(() => import("./pages/Admin/Label/CountryLabels.tsx")
 const IntakeLabels = lazy(() => import("./pages/Admin/Label/IntakeLabels.tsx"));
 const ServiceArea = lazy(() => import("./pages/Admin/Label/ServiceArea.tsx"));
 
+const GoogleDriveSettings = lazy(() => import("./pages/Admin/Settings/GoogleDriveSettings.tsx"));
+
 export default function App() {
   return (
     <Router>
@@ -197,6 +199,10 @@ export default function App() {
           <Route path="service-area" element={<ServiceArea />} />
           <Route path="country-labels" element={<CountryLabels />} />
           <Route path="intake-labels" element={<IntakeLabels />} />
+
+          {/* ===== INTEGRATIONS ===== */}
+
+          <Route path="google-drive-settings" element={<GoogleDriveSettings />} />
 
         </Route>
 

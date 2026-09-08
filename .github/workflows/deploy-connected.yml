@@ -1,0 +1,91 @@
+name: Deploy Connected Client Management
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Package source
+        run: |
+          git archive --format=tar HEAD | gzip > connected-deploy.tgz
+
+      - name: Install SSH password helper
+        run: sudo apt-get update && sudo apt-get install -y sshpass
+
+      - name: Trust VPS host key
+        timeout-minutes: 2
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+        run: |
+          mkdir -p ~/.ssh
+          timeout 30 ssh-keyscan -p "$VPS_PORT" "$VPS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Upload source archive
+        timeout-minutes: 5
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PASSWORD: ${{ secrets.VPS_PASSWORD }}
+        run: |
+          SSH_OPTS="-o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
+          sshpass -p "$VPS_PASSWORD" ssh $SSH_OPTS -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" "mkdir -p ~/connected_deploy_incoming"
+          sshpass -p "$VPS_PASSWORD" scp $SSH_OPTS -P "$VPS_PORT" connected-deploy.tgz "$VPS_USER@$VPS_HOST:~/connected_deploy_incoming/source.tgz"
+
+      - name: Backup, deploy and migrate
+        timeout-minutes: 20
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PASSWORD: ${{ secrets.VPS_PASSWORD }}
+        run: |
+          SSH_OPTS="-o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
+          sshpass -p "$VPS_PASSWORD" ssh $SSH_OPTS -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" "SUDO_PASSWORD='$VPS_PASSWORD' bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          LIVE_DIR="$HOME/connected_client_management"
+          STAMP="$(date +%Y%m%d_%H%M%S)"
+          TEMP_DIR="$HOME/connected_deploy_incoming/extract_${STAMP}"
+          BACKUP_DIR="$HOME/backups/connected_client_management_${STAMP}"
+
+          # Always take a fresh DB + files backup right before touching anything
+          # live - this project carries real client data, so every deploy gets
+          # its own restore point instead of relying on a one-off manual backup.
+          mkdir -p "$BACKUP_DIR"
+          cd "$LIVE_DIR"
+          DB_ROOT_PASSWORD="$(grep DOCKER_DB_ROOT_PASSWORD .env | cut -d= -f2-)"
+          DB_NAME="$(grep '^DOCKER_DB_DATABASE=' .env | cut -d= -f2-)"
+          printf '%s\n' "$SUDO_PASSWORD" | sudo -S docker exec connected_client_management-db-1 \
+            mysqldump -uroot -p"$DB_ROOT_PASSWORD" "$DB_NAME" 2>/dev/null | gzip > "$BACKUP_DIR/${DB_NAME}.sql.gz"
+          tar -czf "$BACKUP_DIR/app_files.tar.gz" --exclude=node_modules --exclude=vendor -C "$LIVE_DIR" .
+
+          mkdir -p "$TEMP_DIR"
+          tar -xzf "$HOME/connected_deploy_incoming/source.tgz" -C "$TEMP_DIR"
+
+          # Preserve the live .env - it is never shipped through the repo.
+          rsync -a --delete --exclude='.env' "$TEMP_DIR"/ "$LIVE_DIR"/
+          rm -rf "$TEMP_DIR"
+
+          cd "$LIVE_DIR"
+          printf '%s\n' "$SUDO_PASSWORD" | sudo -S docker compose up -d --build --remove-orphans
+
+          APP_CID="$(printf '%s\n' "$SUDO_PASSWORD" | sudo -S docker compose ps -q app)"
+          printf '%s\n' "$SUDO_PASSWORD" | sudo -S docker exec "$APP_CID" php artisan migrate --force --no-interaction
+          printf '%s\n' "$SUDO_PASSWORD" | sudo -S docker exec "$APP_CID" php artisan config:clear
+          printf '%s\n' "$SUDO_PASSWORD" | sudo -S docker exec "$APP_CID" php artisan config:cache
+          printf '%s\n' "$SUDO_PASSWORD" | sudo -S docker exec "$APP_CID" php artisan view:cache
+
+          printf '%s\n' "$SUDO_PASSWORD" | sudo -S docker compose ps
+          curl -I --max-time 20 https://ops.connectededucation.com || true
+          REMOTE

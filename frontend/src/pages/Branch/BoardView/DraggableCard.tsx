@@ -1,5 +1,5 @@
 import type { MouseEvent as ReactMouseEvent } from "react";
-import { SquarePen, Tag } from "lucide-react";
+import { Mail, SquarePen, Tag } from "lucide-react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { Card, CardLabelBadge } from "./types";
@@ -86,6 +86,12 @@ export default function DraggableCard({
           <p className="text-xs text-gray-500 mt-1">
             {formatDateWithOrdinal(card.created_at)}
           </p>
+          {card.contact_email && (
+            <p className="mt-1 flex items-center gap-1 text-xs text-gray-500 truncate">
+              <Mail size={11} className="shrink-0" />
+              <span className="truncate">{card.contact_email}</span>
+            </p>
+          )}
         </div>
 
         {(previewLabelBadges.length > 0 || (card.members && card.members.length > 0)) && (

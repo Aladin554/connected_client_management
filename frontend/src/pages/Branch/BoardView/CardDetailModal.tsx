@@ -10,7 +10,7 @@ import "tinymce/plugins/lists";
 import "tinymce/skins/ui/oxide/skin.min.css";
 import "tinymce/skins/ui/oxide/content.min.css";
 import "tinymce/skins/content/default/content.min.css";
-import { Archive, BarChart3, Image as ImageIcon, Bell, Calendar, CreditCard, MessageSquare, MoreHorizontal, Paperclip, Plus, SquarePen, Star, Users, X } from "lucide-react";
+import { Archive, BarChart3, Image as ImageIcon, Bell, Calendar, Check, Copy, CreditCard, FolderOpen, MessageSquare, MoreHorizontal, Paperclip, Plus, SquarePen, Star, Users, X } from "lucide-react";
 import api from "../../../api/axios";
 import "react-datepicker/dist/react-datepicker.css";
 import type { Activity, Card, CardMember, Profile } from "./types";
@@ -107,6 +107,7 @@ export default function CardDetailModal({
   const [editedInvoice, setEditedInvoice] = useState(card.invoice || "");
   const [editedFirstName, setEditedFirstName] = useState(card.first_name || "");
   const [editedLastName, setEditedLastName] = useState(card.last_name || "");
+  const [editedContactEmail, setEditedContactEmail] = useState(card.contact_email || "");
   const [savingCardIdentity, setSavingCardIdentity] = useState(false);
   const [paymentDone, setPaymentDone] = useState(Boolean(card.payment_done));
   const [dependantPaymentDone, setDependantPaymentDone] = useState(Boolean(card.dependant_payment_done));
@@ -136,6 +137,17 @@ export default function CardDetailModal({
     [1, 2, 3, 4].includes(Number(profile?.role_id))
   );
 
+  // Google Drive folder
+  const [driveEnabled, setDriveEnabled] = useState(false);
+  const [driveFolderLink, setDriveFolderLink] = useState<string | null>(
+    card.google_drive_folder_link || null
+  );
+  const [driveMembers, setDriveMembers] = useState<CardMember[]>([]);
+  const [driveOpening, setDriveOpening] = useState(false);
+  const [driveError, setDriveError] = useState<string | null>(null);
+  const [copyingDriveLink, setCopyingDriveLink] = useState(false);
+  const [driveLinkCopied, setDriveLinkCopied] = useState(false);
+
   const canEditCardIdentity = [1, 2, 3].includes(Number(profile?.role_id));
   const canManagePaymentStatus = [1, 2, 3].includes(Number(profile?.role_id));
 
@@ -161,6 +173,7 @@ export default function CardDetailModal({
     setEditedInvoice(card.invoice || "");
     setEditedFirstName(card.first_name || "");
     setEditedLastName(card.last_name || "");
+    setEditedContactEmail(card.contact_email || "");
     setPaymentDone(Boolean(card.payment_done));
     setDependantPaymentDone(Boolean(card.dependant_payment_done));
     setShowCardActionsMenu(false);
@@ -172,8 +185,11 @@ export default function CardDetailModal({
     setMemberSearchTerm("");
     setMembersError(null);
     setCanManageMembers([1, 2, 3, 4].includes(Number(profile?.role_id)));
+    setDriveFolderLink(card.google_drive_folder_link || null);
+    setDriveMembers([]);
     fetchActivities();
     void fetchCardMembers();
+    void fetchDriveInfo();
   }, [card, profile?.role_id]);
 
   useEffect(() => {
@@ -192,6 +208,7 @@ export default function CardDetailModal({
         setEditedInvoice(card.invoice || "");
         setEditedFirstName(card.first_name || "");
         setEditedLastName(card.last_name || "");
+        setEditedContactEmail(card.contact_email || "");
         return;
       }
       event.preventDefault();
@@ -200,7 +217,7 @@ export default function CardDetailModal({
 
     window.addEventListener("keydown", handleEscClose);
     return () => window.removeEventListener("keydown", handleEscClose);
-  }, [onClose, showCardActionsMenu, isEditingCardIdentity, card.invoice, card.first_name, card.last_name]);
+  }, [onClose, showCardActionsMenu, isEditingCardIdentity, card.invoice, card.first_name, card.last_name, card.contact_email]);
 
   useEffect(() => {
     if (!showCardActionsMenu) return;
@@ -326,6 +343,73 @@ export default function CardDetailModal({
     await fetchCardMembers();
   };
 
+  const fetchDriveInfo = async (): Promise<{ link: string | null; enabled: boolean; error: string | null }> => {
+    try {
+      const res = await api.get(`/cards/${card.id}/drive-info`);
+      const enabled = Boolean(res.data?.enabled);
+      const link = res.data?.folder_link || null;
+      const error = res.data?.error || null;
+      setDriveEnabled(enabled);
+      setDriveFolderLink(link);
+      setDriveMembers(Array.isArray(res.data?.members) ? res.data.members : []);
+      setDriveError(error);
+      return { link, enabled, error };
+    } catch (err) {
+      console.error("Failed to fetch Google Drive info:", err);
+      const error = "Could not reach the server to check Google Drive status.";
+      setDriveError(error);
+      return { link: null, enabled: driveEnabled, error };
+    }
+  };
+
+  const handleOpenDrive = async () => {
+    if (driveOpening) return;
+
+    if (driveFolderLink) {
+      window.open(driveFolderLink, "_blank", "noopener,noreferrer");
+      return;
+    }
+
+    setDriveOpening(true);
+    try {
+      const { link, enabled, error } = await fetchDriveInfo();
+      if (link) {
+        window.open(link, "_blank", "noopener,noreferrer");
+      } else if (!enabled) {
+        alert("Google Drive integration is not enabled for this app yet.");
+      } else {
+        alert(
+          `Google Drive folder could not be created/found.\n\nSource: Google Drive API\nReason: ${
+            error || "Unknown error"
+          }\n\nCheck: does the configured root folder still exist in Google Drive, and is it shared with the service account?`
+        );
+      }
+    } finally {
+      setDriveOpening(false);
+    }
+  };
+
+  const handleCopyDriveLink = async () => {
+    if (copyingDriveLink) return;
+
+    setCopyingDriveLink(true);
+    try {
+      const link = driveFolderLink || (await fetchDriveInfo()).link;
+      if (!link) {
+        alert("Google Drive folder is not available for this card yet.");
+        return;
+      }
+      await navigator.clipboard.writeText(link);
+      setDriveLinkCopied(true);
+      window.setTimeout(() => setDriveLinkCopied(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy Google Drive link:", err);
+      alert("Could not copy the Google Drive link.");
+    } finally {
+      setCopyingDriveLink(false);
+    }
+  };
+
   const handleToggleMember = (userId: number) => {
     if (!canManageMembers || membersSaving) return;
 
@@ -346,6 +430,7 @@ export default function CardDetailModal({
       await fetchCardMembers();
       await fetchActivities();
       await fetchBoard();
+      void fetchDriveInfo();
       setShowMembersModal(false);
     } catch (err: any) {
       console.error("Failed to save members:", err);
@@ -524,6 +609,7 @@ export default function CardDetailModal({
     setEditedInvoice(card.invoice || "");
     setEditedFirstName(card.first_name || "");
     setEditedLastName(card.last_name || "");
+    setEditedContactEmail(card.contact_email || "");
     setIsEditingCardIdentity(true);
   };
 
@@ -533,17 +619,24 @@ export default function CardDetailModal({
     const nextInvoice = editedInvoice.trim();
     const nextFirstName = editedFirstName.trim();
     const nextLastName = editedLastName.trim();
+    const nextContactEmail = editedContactEmail.trim();
 
     if (!nextInvoice) {
       alert("Invoice is required.");
       return;
     }
 
+    if (nextContactEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nextContactEmail)) {
+      alert("Please enter a valid email address.");
+      return;
+    }
+
     const invoiceUnchanged = (card.invoice || "") === nextInvoice;
     const firstNameUnchanged = (card.first_name || "") === nextFirstName;
     const lastNameUnchanged = (card.last_name || "") === nextLastName;
+    const contactEmailUnchanged = (card.contact_email || "") === nextContactEmail;
 
-    if (invoiceUnchanged && firstNameUnchanged && lastNameUnchanged) {
+    if (invoiceUnchanged && firstNameUnchanged && lastNameUnchanged && contactEmailUnchanged) {
       setIsEditingCardIdentity(false);
       return;
     }
@@ -554,6 +647,7 @@ export default function CardDetailModal({
         invoice: nextInvoice,
         first_name: nextFirstName || null,
         last_name: nextLastName || null,
+        contact_email: nextContactEmail || null,
       });
 
       setSelectedCard((prev) =>
@@ -563,17 +657,22 @@ export default function CardDetailModal({
               invoice: nextInvoice,
               first_name: nextFirstName || undefined,
               last_name: nextLastName || undefined,
+              contact_email: nextContactEmail || null,
             }
           : prev
       );
 
       await fetchBoard();
       await fetchActivities();
+      if (!contactEmailUnchanged) {
+        void fetchDriveInfo();
+      }
       setIsEditingCardIdentity(false);
     } catch (err: any) {
       console.error("Failed to update card identity:", err);
       const apiMessage =
         err?.response?.data?.errors?.invoice?.[0] ||
+        err?.response?.data?.errors?.contact_email?.[0] ||
         err?.response?.data?.message;
       alert(apiMessage || "Could not update card details.");
     } finally {
@@ -1113,6 +1212,13 @@ export default function CardDetailModal({
                       className="h-10 rounded-md border border-indigo-200 bg-white px-3 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-400"
                     />
                   </div>
+                  <input
+                    type="email"
+                    value={editedContactEmail}
+                    onChange={(e) => setEditedContactEmail(e.target.value)}
+                    placeholder="Email (for Google Drive folder access)"
+                    className="h-10 w-full rounded-md border border-indigo-200 bg-white px-3 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                  />
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
@@ -1129,6 +1235,7 @@ export default function CardDetailModal({
                         setEditedInvoice(card.invoice || "");
                         setEditedFirstName(card.first_name || "");
                         setEditedLastName(card.last_name || "");
+                        setEditedContactEmail(card.contact_email || "");
                       }}
                       disabled={savingCardIdentity}
                       className="px-4 py-1.5 rounded-md border border-gray-300 bg-white text-gray-700 text-sm font-semibold hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
@@ -1194,6 +1301,34 @@ export default function CardDetailModal({
     <CalendarDays size={15} strokeWidth={2.2} className="text-white/90" />
     {card.due_date ? formatDateWithOrdinal(card.due_date) : "Due Dates"}
   </button>
+
+  {/* Google Drive folder */}
+  <button
+    type="button"
+    onClick={() => void handleOpenDrive()}
+    disabled={driveOpening}
+    title="Open the Google Drive folder for this card"
+    className="h-10 px-3 rounded-md bg-[#0f9d58] text-white text-sm font-bold border border-[#0f9d58] hover:brightness-95 transition flex items-center gap-1.5 disabled:opacity-60 disabled:cursor-not-allowed"
+  >
+    <FolderOpen size={15} strokeWidth={2.2} className="text-white/90" />
+    {driveOpening ? "Opening..." : "Google Drive"}
+  </button>
+
+  <button
+    type="button"
+    onClick={() => void handleCopyDriveLink()}
+    disabled={copyingDriveLink}
+    title="Copy Google Drive folder link"
+    aria-label="Copy Google Drive folder link"
+    className={`h-10 px-3 rounded-md text-sm font-bold border transition flex items-center gap-1.5 disabled:opacity-60 disabled:cursor-not-allowed ${
+      driveLinkCopied
+        ? "bg-[#0f9d58] border-[#0f9d58] text-white"
+        : "bg-[#0e8a76] border-[#0e8a76] text-white hover:brightness-95"
+    }`}
+  >
+    {driveLinkCopied ? <Check size={15} className="text-white/90" /> : <Copy size={15} className="text-white/90" />}
+    {driveLinkCopied ? "Copied" : copyingDriveLink ? "Copying..." : "Drive link"}
+  </button>
 </div>
 
             {/* Members + Labels + Meta */}
@@ -1221,6 +1356,18 @@ export default function CardDetailModal({
                     <Plus size={18} />
                   </button>
                 </div>
+                {driveEnabled && driveFolderLink && (
+                  <p className="mt-2 text-xs text-gray-500">
+                    {driveMembers.length > 0
+                      ? `Shared on Google Drive with ${driveMembers.length} member${driveMembers.length === 1 ? "" : "s"}.`
+                      : "Add members to share this card's Google Drive folder with them."}
+                  </p>
+                )}
+                {driveEnabled && !driveFolderLink && driveError && (
+                  <p className="mt-2 text-xs text-rose-600" title={driveError}>
+                    Google Drive folder unavailable: {driveError}
+                  </p>
+                )}
               </div>
 
             </div>

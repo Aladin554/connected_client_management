@@ -67,7 +67,34 @@ services:
       DB_PASSWORD: ${DOCKER_DB_PASSWORD:-change_me}
       RUN_MIGRATIONS: "false"
       RUN_SEEDERS: "false"
-    command: php artisan queue:work --sleep=3 --tries=3 --timeout=120
+    command: php artisan queue:work --sleep=3 --tries=3 --timeout=1800
+    depends_on:
+      app:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    volumes:
+      - storage_data_prod:/var/www/html/storage
+      - bootstrap_cache_prod:/var/www/html/bootstrap/cache
+    restart: unless-stopped
+
+  scheduler:
+    image: connected-client-app:${APP_IMAGE_TAG:-latest}
+    env_file:
+      - .env
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      APP_DEBUG: ${APP_DEBUG:-false}
+      APP_URL: ${APP_URL:-http://localhost}
+      DB_CONNECTION: mysql
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_DATABASE: ${DOCKER_DB_DATABASE:-project_management}
+      DB_USERNAME: ${DOCKER_DB_USERNAME:-app}
+      DB_PASSWORD: ${DOCKER_DB_PASSWORD:-change_me}
+      RUN_MIGRATIONS: "false"
+      RUN_SEEDERS: "false"
+    command: php artisan schedule:work
     depends_on:
       app:
         condition: service_healthy

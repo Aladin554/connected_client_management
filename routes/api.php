@@ -7,6 +7,8 @@ use App\Http\Controllers\BoardListController;
 use App\Http\Controllers\CityController;
 use App\Http\Controllers\CountryLabelController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\GoogleDriveOAuthController;
+use App\Http\Controllers\GoogleDriveSettingController;
 use App\Http\Controllers\IntakeLabelController;
 use App\Http\Controllers\RoleController;
 use App\Http\Controllers\ServiceAreaController;
@@ -25,6 +27,12 @@ use App\Http\Middleware\CheckPanelAccess;
 Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:10,1');
 Route::post('/forgot-password', [AuthController::class, 'forgotPassword'])->middleware('throttle:5,1');
 Route::post('/reset-password', [AuthController::class, 'resetPassword'])->middleware('throttle:5,1');
+
+// Google redirects the browser here after OAuth consent - no Authorization
+// header is sent on a plain redirect, so this can't sit behind auth:sanctum.
+// The "state" param (checked inside the controller) proves it followed a
+// connect() call made by an authenticated superadmin.
+Route::get('/google-drive-oauth/callback', [GoogleDriveOAuthController::class, 'callback']);
 
 // Protected routes
 Route::middleware(['auth:sanctum', CheckPanelAccess::class, 'admin.ip'])->group(function () {
@@ -52,6 +60,11 @@ Route::middleware(['auth:sanctum', CheckPanelAccess::class, 'admin.ip'])->group(
     Route::get('/cities/{city}', [CityController::class, 'show']);
     Route::put('/cities/{city}', [CityController::class, 'update']); // Superadmin only
     Route::delete('/cities/{city}', [CityController::class, 'destroy']); // Superadmin only
+
+    Route::get('/google-drive-settings', [GoogleDriveSettingController::class, 'show']); // Superadmin only
+    Route::put('/google-drive-settings', [GoogleDriveSettingController::class, 'update']); // Superadmin only
+    Route::get('/google-drive-oauth/connect', [GoogleDriveOAuthController::class, 'connect']); // Superadmin only
+    Route::post('/google-drive-oauth/disconnect', [GoogleDriveOAuthController::class, 'disconnect']); // Superadmin only
 
     // ────────────────────────────────────────────────
     // Boards
@@ -89,6 +102,7 @@ Route::middleware(['auth:sanctum', CheckPanelAccess::class, 'admin.ip'])->group(
     Route::put('/cards/{boardCard}/move-to-commission', [BoardCardController::class, 'moveToCommissionBoard']);
     Route::get('/cards/{boardCard}/members', [BoardCardController::class, 'members']);
     Route::put('/cards/{boardCard}/members', [BoardCardController::class, 'updateMembers']);
+    Route::get('/cards/{boardCard}/drive-info', [BoardCardController::class, 'driveInfo']);
 
     // ────────────────────────────────────────────────
     // Activities & Comments
