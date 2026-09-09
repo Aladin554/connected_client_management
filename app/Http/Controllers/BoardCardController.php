@@ -30,6 +30,24 @@ class BoardCardController extends Controller
 
     public const CLIENT_UPLOADS_SUBFOLDER = 'Client Uploaded Files';
 
+    /**
+     * Every superadmin/admin becomes a Drive member of every card automatically -
+     * except accounts listed in GOOGLE_DRIVE_EXCLUDED_ADMIN_EMAILS, which exist
+     * only for app/infra administration and shouldn't clutter client Drive folders.
+     */
+    private function driveEligibleAdminEmails()
+    {
+        $excluded = collect(config('services.google_drive.excluded_admin_emails', []))
+            ->map(fn ($email) => strtolower(trim($email)));
+
+        return User::whereIn('role_id', [1, 2])
+            ->pluck('email')
+            ->filter()
+            ->unique()
+            ->reject(fn ($email) => $excluded->contains(strtolower(trim($email))))
+            ->values();
+    }
+
     private function cardDriveFolderName(BoardCard $card): string
     {
         $invoice = $card->invoice ?: ('Card #' . $card->id);
@@ -84,7 +102,7 @@ class BoardCardController extends Controller
         // and loses the drive. One at a time, paced, for the same reason
         // as the sleep() above - avoid a burst of writes right after
         // creating a drive with no history.
-        $adminEmails = User::whereIn('role_id', [1, 2])->pluck('email')->filter()->unique();
+        $adminEmails = $this->driveEligibleAdminEmails();
         foreach ($adminEmails as $adminEmail) {
             $this->driveService->addSharedDriveMember($drive['id'], $adminEmail, 'organizer');
             usleep(500000);
@@ -184,7 +202,7 @@ class BoardCardController extends Controller
         // OFF the drive membership entirely and only get an item-level
         // "writer" permission on "Client Uploaded Files" - meaning they
         // can't see Admission/Visa Specific Files at all, not even read-only.
-        $allAdminEmails = User::whereIn('role_id', [1, 2])->pluck('email')->filter()->unique();
+        $allAdminEmails = $this->driveEligibleAdminEmails();
 
         // The OAuth-connected account itself must always stay "wanted" -
         // it's the drive's creator/organizer but isn't necessarily a row

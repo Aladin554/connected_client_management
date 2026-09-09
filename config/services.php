@@ -43,6 +43,15 @@ return [
         'oauth_client_id' => env('GOOGLE_OAUTH_CLIENT_ID'),
         'oauth_client_secret' => env('GOOGLE_OAUTH_CLIENT_SECRET'),
         'oauth_redirect_uri' => env('GOOGLE_OAUTH_REDIRECT_URI'),
+
+        // Superadmin/admin accounts that exist only for app/infra
+        // administration (e.g. the account used to set up the Google Cloud
+        // project) and should NOT be auto-added as a member of every card's
+        // Shared Drive, unlike every other superadmin/admin.
+        'excluded_admin_emails' => array_values(array_filter(array_map(
+            'trim',
+            explode(',', (string) env('GOOGLE_DRIVE_EXCLUDED_ADMIN_EMAILS', ''))
+        ))),
     ],
 
 ];
