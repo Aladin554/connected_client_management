@@ -404,61 +404,6 @@ class GoogleDriveService
     }
 
     /**
-     * Create a shortcut inside $parentFolderId that points at $targetId.
-     * Google Drive does not allow a Shared Drive to be nested inside a
-     * folder, and shortcuts can't target a Shared Drive's root either - only
-     * a regular file/folder. $targetId must be a folder that lives INSIDE a
-     * Shared Drive (e.g. one of a card's top-level subfolders), not the
-     * Shared Drive itself. Opening the shortcut lands there; since the
-     * viewer is a real member of that Shared Drive, Drive's breadcrumb lets
-     * them navigate up to browse the rest of it from there.
-     * Idempotent: skips creating a duplicate if one with this name already
-     * exists directly inside $parentFolderId.
-     */
-    public function createShortcut(string $targetId, string $name, string $parentFolderId): ?array
-    {
-        if (!$this->isOAuthEnabled()) {
-            return null;
-        }
-
-        $existing = $this->findChildByName($parentFolderId, $name);
-        if ($existing) {
-            return $existing;
-        }
-
-        try {
-            $response = $this->oauthClient()
-                ->post('/files?supportsAllDrives=true&fields=id%2CwebViewLink', [
-                    'name' => $name,
-                    'mimeType' => 'application/vnd.google-apps.shortcut',
-                    'parents' => [$parentFolderId],
-                    'shortcutDetails' => ['targetId' => $targetId],
-                ])
-                ->throw();
-
-            $fileId = $response->json('id');
-            if (!$fileId) {
-                return null;
-            }
-
-            return [
-                'id' => $fileId,
-                'link' => $response->json('webViewLink'),
-            ];
-        } catch (\Throwable $exception) {
-            $this->lastError = $exception->getMessage();
-            Log::error('Google Drive shortcut creation failed', [
-                'name' => $name,
-                'target' => $targetId,
-                'parent' => $parentFolderId,
-                'error' => $exception->getMessage(),
-            ]);
-
-            return null;
-        }
-    }
-
-    /**
      * Add someone as an actual member of a Shared Drive (not just an item
      * share) - this is what unlocks real Google Drive for Desktop local sync
      * and the ability to add new files from a synced local folder. Role:
