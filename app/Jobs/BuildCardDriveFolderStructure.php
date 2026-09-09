@@ -9,6 +9,7 @@ use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Queue\Middleware\WithoutOverlapping;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
 
@@ -29,6 +30,19 @@ class BuildCardDriveFolderStructure implements ShouldQueue
 
     public function __construct(private readonly BoardCard $card)
     {
+    }
+
+    /**
+     * With multiple queue workers, two jobs for the SAME card could otherwise
+     * run at once (e.g. a normal dispatch racing a drive:repair re-dispatch)
+     * and both create the same folder before either sees the other's create -
+     * idempotency only protects against a *retry after* the first attempt,
+     * not two attempts checking simultaneously. This serializes jobs per
+     * card while leaving different cards free to run fully in parallel.
+     */
+    public function middleware(): array
+    {
+        return [(new WithoutOverlapping((string) $this->card->id))->expireAfter(1800)];
     }
 
     public function handle(GoogleDriveService $driveService, BoardCardController $controller): void

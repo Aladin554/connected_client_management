@@ -84,7 +84,7 @@ services:
     # different cards' jobs in parallel across replicas is safe and clears
     # the backlog instead of processing cards one at a time.
     deploy:
-      replicas: 3
+      replicas: 10
 
   scheduler:
     image: connected-client-app:${APP_IMAGE_TAG:-latest}

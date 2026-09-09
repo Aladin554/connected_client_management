@@ -8,6 +8,7 @@ use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Queue\Middleware\WithoutOverlapping;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
 
@@ -29,6 +30,18 @@ class UploadDriveTemplateFiles implements ShouldQueue
 
     public function __construct(private readonly BoardCard $card)
     {
+    }
+
+    /**
+     * With multiple queue workers, two of this job for the SAME card could
+     * otherwise run at once and both upload the same file before either
+     * sees the other's upload - idempotency only protects against a retry
+     * after the first attempt finishes, not two attempts checking at the
+     * same time. Serializes per card; different cards still run in parallel.
+     */
+    public function middleware(): array
+    {
+        return [(new WithoutOverlapping((string) $this->card->id))->expireAfter(1800)];
     }
 
     public function handle(GoogleDriveService $driveService): void

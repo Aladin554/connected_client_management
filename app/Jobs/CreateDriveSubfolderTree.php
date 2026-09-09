@@ -7,6 +7,7 @@ use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Queue\Middleware\WithoutOverlapping;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
 
@@ -36,6 +37,18 @@ class CreateDriveSubfolderTree implements ShouldQueue
         private readonly string $parentFolderId,
         private readonly array $tree
     ) {
+    }
+
+    /**
+     * Only matters for the standalone-dispatch path (the legacy-card
+     * backfill in ensureClientUploadsSubfolder) - the inline-call path from
+     * BuildCardDriveFolderStructure is already serialized per card by that
+     * job's own lock. Guards against two workers both racing to create the
+     * same folder under the same parent.
+     */
+    public function middleware(): array
+    {
+        return [(new WithoutOverlapping($this->parentFolderId))->expireAfter(1800)];
     }
 
     /**
