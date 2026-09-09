@@ -77,6 +77,14 @@ services:
       - storage_data_prod:/var/www/html/storage
       - bootstrap_cache_prod:/var/www/html/bootstrap/cache
     restart: unless-stopped
+    # Multiple cards' Drive folder-structure jobs can queue up back to back;
+    # each one is internally paced (deliberately slow, to avoid Google
+    # deleting a brand new per-card Shared Drive hit with a burst of writes)
+    # but that pacing is scoped to one card's own drive, so running several
+    # different cards' jobs in parallel across replicas is safe and clears
+    # the backlog instead of processing cards one at a time.
+    deploy:
+      replicas: 3
 
   scheduler:
     image: connected-client-app:${APP_IMAGE_TAG:-latest}
