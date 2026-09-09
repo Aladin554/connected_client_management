@@ -21,6 +21,7 @@ interface User {
   role?: Role;
   can_create_users: number | string;     // 0 or 1
   panel_permission: number | string;     // ← NEW: 0 or 1             // already existed in your code
+  drive_access_revoked: boolean;
   created_at?: string;
   updated_at?: string;
 }
@@ -30,6 +31,7 @@ const normalizeUser = (user: any): User => ({
   role_id: Number(user?.role_id ?? 0),
   can_create_users: Number(user?.can_create_users ?? 0),
   panel_permission: Number(user?.panel_permission ?? user?.permission ?? 0),
+  drive_access_revoked: Boolean(user?.drive_access_revoked),
 });
 
 export default function AdminUsers() {
@@ -230,6 +232,40 @@ export default function AdminUsers() {
     }
   };
 
+  // Revoke/restore a superadmin/admin's automatic Google Drive access to
+  // every card - immediately re-syncs all cards on the backend.
+  const toggleDriveAccess = async (user: User) => {
+    if (currentUser?.id === user.id) {
+      toast.error("You cannot change your own Drive access!");
+      return;
+    }
+
+    if (currentUser?.role_id !== 1) {
+      toast.warn("Only super administrators can change Drive access.");
+      return;
+    }
+
+    const oldVal = user.drive_access_revoked;
+    const optimistic = !oldVal;
+
+    setUsers((prev) =>
+      prev.map((u) => (u.id === user.id ? { ...u, drive_access_revoked: optimistic } : u))
+    );
+
+    try {
+      const res = await api.patch(`/users/${user.id}/toggle-drive-access`);
+      const body = res.data ?? {};
+      const finalValue = Boolean(body.drive_access_revoked ?? optimistic);
+      applyServerUpdate(user.id, { drive_access_revoked: finalValue });
+      toast.success(body.message || (finalValue ? "Drive access revoked" : "Drive access restored"));
+    } catch (err: any) {
+      setUsers((prev) =>
+        prev.map((u) => (u.id === user.id ? { ...u, drive_access_revoked: oldVal } : u))
+      );
+      toast.error(err?.response?.data?.message || "Failed to update Drive access");
+    }
+  };
+
   const confirmDelete = (id: number) => {
     if (currentUser?.id === id) {
       toast.error("You cannot delete yourself!");
@@ -394,6 +430,9 @@ export default function AdminUsers() {
                   <th className="px-5 py-3 text-left font-medium text-gray-700 dark:text-gray-300 border-r border-gray-200 dark:border-gray-700">
                     Panel Permission
                   </th>
+                  <th className="px-5 py-3 text-left font-medium text-gray-700 dark:text-gray-300 border-r border-gray-200 dark:border-gray-700">
+                    Drive Access
+                  </th>
                 </>
               )}
               <th className="px-5 py-3 text-left font-medium text-gray-700 dark:text-gray-300">Action</th>
@@ -403,7 +442,7 @@ export default function AdminUsers() {
             {loading ? (
               <tr>
                 <td
-                  colSpan={currentUser?.role_id === 1 ? 6 : 4}
+                  colSpan={currentUser?.role_id === 1 ? 7 : 4}
                   className="text-center py-12 text-gray-500 dark:text-gray-400"
                 >
                   Loading...
@@ -412,7 +451,7 @@ export default function AdminUsers() {
             ) : paginatedData.length === 0 ? (
               <tr>
                 <td
-                  colSpan={currentUser?.role_id === 1 ? 6 : 4}
+                  colSpan={currentUser?.role_id === 1 ? 7 : 4}
                   className="text-center py-12 text-gray-500 dark:text-gray-400"
                 >
                   No users found
@@ -467,6 +506,24 @@ export default function AdminUsers() {
                         >
                           {Number(user.panel_permission) === 1 ? "Allowed" : "Blocked"}
                         </button>
+                      </td>
+
+                      <td className="px-4 py-3 border-r border-gray-200 dark:border-gray-700">
+                        {[1, 2].includes(user.role_id) ? (
+                          <button
+                            onClick={() => toggleDriveAccess(user)}
+                            title="Controls whether this account has automatic Manager access to every card's Google Drive folder"
+                            className={`px-3 py-1.5 rounded text-white text-sm font-medium transition ${
+                              user.drive_access_revoked
+                                ? "bg-red-600 hover:bg-red-700"
+                                : "bg-green-600 hover:bg-green-700"
+                            }`}
+                          >
+                            {user.drive_access_revoked ? "Revoked" : "Enabled"}
+                          </button>
+                        ) : (
+                          <span className="text-gray-400 dark:text-gray-600">-</span>
+                        )}
                       </td>
                     </>
                   )}
@@ -547,6 +604,20 @@ export default function AdminUsers() {
                       {Number(user.panel_permission) === 1 ? "Allowed" : "Blocked"}
                     </button>
                   </div>
+
+                  {[1, 2].includes(user.role_id) && (
+                    <div>
+                      <span className="text-gray-600 dark:text-gray-400">Drive Access:</span>
+                      <button
+                        onClick={() => toggleDriveAccess(user)}
+                        className={`ml-2 px-2 py-1 rounded text-white text-xs font-medium ${
+                          user.drive_access_revoked ? "bg-red-600" : "bg-green-600"
+                        }`}
+                      >
+                        {user.drive_access_revoked ? "Revoked" : "Enabled"}
+                      </button>
+                    </div>
+                  )}
                 </>
               )}
             </div>

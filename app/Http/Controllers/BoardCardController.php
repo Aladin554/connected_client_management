@@ -32,8 +32,10 @@ class BoardCardController extends Controller
 
     /**
      * Every superadmin/admin becomes a Drive member of every card automatically -
-     * except accounts listed in GOOGLE_DRIVE_EXCLUDED_ADMIN_EMAILS, which exist
-     * only for app/infra administration and shouldn't clutter client Drive folders.
+     * except accounts listed in GOOGLE_DRIVE_EXCLUDED_ADMIN_EMAILS (exist only
+     * for app/infra administration) or with drive_access_revoked set (a
+     * superadmin cut off their Drive access specifically, e.g. a compromised
+     * account - see UserController::toggleDriveAccess).
      */
     private function driveEligibleAdminEmails()
     {
@@ -41,6 +43,7 @@ class BoardCardController extends Controller
             ->map(fn ($email) => strtolower(trim($email)));
 
         return User::whereIn('role_id', [1, 2])
+            ->where('drive_access_revoked', false)
             ->pluck('email')
             ->filter()
             ->unique()

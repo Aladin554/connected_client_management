@@ -25,6 +25,7 @@ class User extends Authenticatable
         'last_login_at',
         'can_create_users',
         'allowed_ips',
+        'drive_access_revoked',
     ];
 
     protected $hidden = [
@@ -45,6 +46,7 @@ class User extends Authenticatable
         'permission' => 'integer',
         'report_notification' => 'integer',
         'allowed_ips' => 'array',
+        'drive_access_revoked' => 'boolean',
     ];
 
     /**

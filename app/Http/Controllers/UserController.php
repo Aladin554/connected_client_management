@@ -434,6 +434,46 @@ class UserController extends Controller
         ]);
     }
 
+    // --- Toggle Google Drive access ---
+    /**
+     * Superadmin/admin accounts get automatic Manager access to every card's
+     * Google Drive folder. This cuts that off for one specific account (e.g.
+     * a compromised account) without touching their app role/permissions,
+     * and immediately re-syncs every existing card's Drive membership so the
+     * change takes effect right away rather than waiting for each card's own
+     * next natural sync.
+     */
+    public function toggleDriveAccess(int $id): JsonResponse
+    {
+        $user = User::findOrFail($id);
+
+        if ((int) $user->id === (int) $this->authUser()->id) {
+            return response()->json(['message' => 'You cannot change your own Drive access'], 403);
+        }
+
+        if (!$this->canManage($user)) {
+            return response()->json(['message' => 'Forbidden'], 403);
+        }
+
+        if (!in_array((int) $user->role_id, [1, 2], true)) {
+            return response()->json(['message' => 'Drive access only applies to superadmin/admin accounts'], 422);
+        }
+
+        $user->drive_access_revoked = !$user->drive_access_revoked;
+        $user->save();
+
+        BoardCard::whereNotNull('google_drive_folder_id')
+            ->get()
+            ->each(fn (BoardCard $card) => \App\Jobs\SyncCardDriveAccess::dispatch($card));
+
+        return response()->json([
+            'message' => $user->drive_access_revoked
+                ? 'Drive access revoked - removing from all cards now'
+                : 'Drive access restored - re-adding to all cards now',
+            'drive_access_revoked' => (bool) $user->drive_access_revoked,
+        ]);
+    }
+
     // --- Assign cities to a user ---
     public function updateUserCities(Request $request, User $user): JsonResponse
     {

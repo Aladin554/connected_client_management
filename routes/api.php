@@ -47,6 +47,7 @@ Route::middleware(['auth:sanctum', CheckPanelAccess::class, 'admin.ip'])->group(
     Route::get('/user', fn(Request $request) => $request->user());
     Route::apiResource('users', UserController::class);
     Route::patch('/users/{id}/toggle-permission', [UserController::class, 'togglePermission']);
+    Route::patch('/users/{id}/toggle-drive-access', [UserController::class, 'toggleDriveAccess']);
     Route::patch('/users/{user}/cities', [UserController::class, 'updateUserCities']);
     Route::patch('/users/{user}/boards', [UserController::class, 'updateUserBoards']);
     Route::post('/permissions/assign', [UserController::class, 'assignPermissions']);
