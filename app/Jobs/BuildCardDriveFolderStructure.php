@@ -38,8 +38,6 @@ class BuildCardDriveFolderStructure implements ShouldQueue
             return;
         }
 
-        $useOAuth = (bool) $card->google_drive_own_shared_drive;
-
         $template = config('drive_folder_template', []);
         $failures = [];
 
@@ -49,7 +47,7 @@ class BuildCardDriveFolderStructure implements ShouldQueue
         // backfill path - never produces duplicate top-level folders.
         $created = [];
         foreach (array_keys($template) as $name) {
-            $folder = $driveService->createFolder($name, $card->google_drive_folder_id, $useOAuth);
+            $folder = $driveService->createFolder($name, $card->google_drive_folder_id);
             if ($folder) {
                 $created[$name] = $folder;
             } else {
@@ -77,11 +75,10 @@ class BuildCardDriveFolderStructure implements ShouldQueue
             // Root cause of the earlier "per-card Shared Drive disappears"
             // bug was NOT folder volume - it was syncCardDriveAccess()
             // dropping the OAuth-connected account's own membership during
-            // sync (fixed there + in syncSharedDriveMembers()). So the full
-            // template is safe to build here again, same as non-OAuth mode.
+            // sync (fixed there + in syncSharedDriveMembers()).
             if (!empty($children)) {
                 try {
-                    (new CreateDriveSubfolderTree($subfolder['id'], $children, $useOAuth))->handle($driveService);
+                    (new CreateDriveSubfolderTree($subfolder['id'], $children))->handle($driveService);
                 } catch (\Throwable $exception) {
                     // Keep going with the other top-level branches instead of
                     // aborting the whole card on one bad branch - everything

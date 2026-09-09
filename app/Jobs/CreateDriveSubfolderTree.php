@@ -31,14 +31,10 @@ class CreateDriveSubfolderTree implements ShouldQueue
 
     /**
      * @param array<string, array> $tree Folder name => children (nested, same shape recursively)
-     * @param bool $useOAuth true when $parentFolderId lives inside a per-card
-     *   Shared Drive (created via OAuth) - the service account isn't a member
-     *   of those, so folder creation must go through the OAuth-connected account.
      */
     public function __construct(
         private readonly string $parentFolderId,
-        private readonly array $tree,
-        private readonly bool $useOAuth = false
+        private readonly array $tree
     ) {
     }
 
@@ -67,7 +63,7 @@ class CreateDriveSubfolderTree implements ShouldQueue
             $path = $pathPrefix === '' ? (string) $name : "{$pathPrefix}/{$name}";
 
             try {
-                $folder = $driveService->createFolder((string) $name, $parentId, $this->useOAuth);
+                $folder = $driveService->createFolder((string) $name, $parentId);
             } catch (\Throwable $exception) {
                 Log::error('Google Drive subfolder tree: folder creation failed', [
                     'name' => $name,

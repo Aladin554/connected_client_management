@@ -38,7 +38,6 @@ class UploadDriveTemplateFiles implements ShouldQueue
             return;
         }
 
-        $useOAuth = (bool) $card->google_drive_own_shared_drive;
         $entries = config('drive_folder_template_files', []);
 
         $resolvedFolderIds = [];
@@ -51,8 +50,7 @@ class UploadDriveTemplateFiles implements ShouldQueue
             if (!array_key_exists($pathKey, $resolvedFolderIds)) {
                 $resolvedFolderIds[$pathKey] = $driveService->resolveFolderPath(
                     $card->google_drive_folder_id,
-                    $path,
-                    $useOAuth
+                    $path
                 );
             }
 
@@ -70,7 +68,7 @@ class UploadDriveTemplateFiles implements ShouldQueue
             $localPath = storage_path('app/private/drive-templates/' . $entry['file']);
             $driveName = $entry['as'] ?? $entry['file'];
 
-            $result = $driveService->uploadFile($localPath, $folderId, $driveName, $useOAuth);
+            $result = $driveService->uploadFile($localPath, $folderId, $driveName);
             if (!$result) {
                 $failures[] = "{$pathKey}/{$entry['file']}";
             }

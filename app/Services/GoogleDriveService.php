@@ -3,17 +3,18 @@
 namespace App\Services;
 
 use App\Models\GoogleDriveSetting;
-use Google\Auth\Credentials\ServiceAccountCredentials;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 /**
  * Talks to the Google Drive API v3 REST endpoints directly (via Guzzle/Http)
- * using a service-account access token from google/auth. This avoids pulling
- * in the full google/apiclient-services package, which bundles generated
- * bindings for every Google API and is impractically large for what we need
- * here (folder create + permission share/list/delete).
+ * using an OAuth-connected real Google account. Every card gets its own
+ * brand new Shared Drive - only a real organization member (via OAuth) can
+ * create those or add real members to them, so this is the only supported
+ * mode. This avoids pulling in the full google/apiclient-services package,
+ * which bundles generated bindings for every Google API and is impractically
+ * large for what we need here (folder/file create + permission share/list/delete).
  */
 class GoogleDriveService
 {
@@ -33,17 +34,10 @@ class GoogleDriveService
         return $this->settings ??= GoogleDriveSetting::current();
     }
 
-    public function isEnabled(): bool
-    {
-        $settings = $this->settings();
-        return $settings->enabled && !empty($settings->activeFolderId());
-    }
-
     /**
-     * "Per-card Shared Drive" mode: each card gets its own brand new Shared
-     * Drive, which requires a real Google account (via OAuth) since an
-     * external service account can't create Shared Drives in someone else's
-     * organization or add real members to one.
+     * Each card gets its own brand new Shared Drive, which requires a real
+     * Google account (via OAuth) - an external service account can't create
+     * Shared Drives in someone else's organization or add real members to one.
      */
     public function isOAuthEnabled(): bool
     {
@@ -161,95 +155,32 @@ class GoogleDriveService
     }
 
     /**
-     * The service account's own email (from the credentials JSON), so the
-     * admin panel can show exactly which address a Drive folder must be
-     * shared with. Returns null if the credentials file is missing/unreadable.
-     */
-    public function getServiceAccountEmail(): ?string
-    {
-        $path = $this->resolvedCredentialsPath();
-        if (empty($path) || !is_file($path)) {
-            return null;
-        }
-
-        $contents = json_decode((string) file_get_contents($path), true);
-
-        return $contents['client_email'] ?? null;
-    }
-
-    private function resolvedCredentialsPath(): ?string
-    {
-        $path = config('services.google_drive.credentials_path');
-        if (empty($path)) {
-            return null;
-        }
-
-        // Resolve relative paths against the app base path so it works the
-        // same regardless of the web server's/CLI's current working directory.
-        $isAbsolute = preg_match('#^(/|[A-Za-z]:[\\\\/])#', $path) === 1;
-
-        return $isAbsolute ? $path : base_path($path);
-    }
-
-    private function accessToken(): string
-    {
-        return Cache::remember('google_drive_access_token', 3000, function () {
-            $credentialsPath = $this->resolvedCredentialsPath();
-            if (empty($credentialsPath) || !is_file($credentialsPath)) {
-                throw new \RuntimeException('Google Drive service account credentials file is missing.');
-            }
-
-            $credentials = new ServiceAccountCredentials(self::SCOPE, $credentialsPath);
-            $token = $credentials->fetchAuthToken();
-
-            if (empty($token['access_token'])) {
-                throw new \RuntimeException('Failed to obtain Google Drive access token.');
-            }
-
-            return $token['access_token'];
-        });
-    }
-
-    private function client()
-    {
-        return Http::withToken($this->accessToken())
-            ->baseUrl(self::BASE_URL)
-            ->acceptJson();
-    }
-
-    /**
-     * Create a folder inside the Shared Drive (optionally nested under a parent folder).
-     * Returns ['id' => ..., 'link' => ...] or null when Drive integration is disabled/misconfigured.
-     * Pass $useOAuth for folders inside a per-card Shared Drive (created via
-     * connectOAuthAccount()) - the service account isn't a member of those.
+     * Create a folder inside a Shared Drive, nested under a parent folder.
+     * Returns ['id' => ..., 'link' => ...] or null on failure/if disabled.
      * Idempotent: if a folder with this name already exists directly inside
      * $parentFolderId, that one is returned instead of creating a duplicate -
      * this is what makes retrying a partially-failed job safe.
      */
-    public function createFolder(string $name, ?string $parentFolderId = null, bool $useOAuth = false): ?array
+    public function createFolder(string $name, string $parentFolderId): ?array
     {
-        if (!$useOAuth && !$this->isEnabled()) {
+        if (!$this->isOAuthEnabled()) {
             return null;
         }
 
-        $parent = $parentFolderId ?: $this->settings()->activeFolderId();
-
-        $existing = $this->findChildByName($parent, $name, $useOAuth, foldersOnly: true);
+        $existing = $this->findChildByName($parentFolderId, $name, foldersOnly: true);
         if ($existing) {
             return $existing;
         }
 
         try {
-            $client = $useOAuth ? $this->oauthClient() : $this->client();
-
             // Ask for id+webViewLink directly in the create response so we
             // don't need a second round-trip to fetch metadata - this matters
             // a lot when creating large folder trees (100+ folders).
-            $response = $client
+            $response = $this->oauthClient()
                 ->post('/files?supportsAllDrives=true&fields=id%2CwebViewLink', [
                     'name' => $name,
                     'mimeType' => 'application/vnd.google-apps.folder',
-                    'parents' => [$parent],
+                    'parents' => [$parentFolderId],
                 ])
                 ->throw();
 
@@ -258,12 +189,10 @@ class GoogleDriveService
                 return null;
             }
 
-            if ($useOAuth) {
-                // Deliberately pace writes into a per-card Shared Drive - see
-                // the note in ensureCardDriveFolder() for why. This runs in a
-                // background job, so the extra time is invisible to users.
-                usleep(500000);
-            }
+            // Deliberately pace writes into a per-card Shared Drive - see the
+            // note in ensureCardDriveFolder() for why. This runs in a
+            // background job, so the extra time is invisible to users.
+            usleep(500000);
 
             return [
                 'id' => $fileId,
@@ -287,10 +216,9 @@ class GoogleDriveService
      * idempotent - safe to call again after a retry without risking
      * duplicates.
      */
-    private function findChildByName(string $parentFolderId, string $name, bool $useOAuth = false, bool $foldersOnly = false): ?array
+    private function findChildByName(string $parentFolderId, string $name, bool $foldersOnly = false): ?array
     {
         try {
-            $client = $useOAuth ? $this->oauthClient() : $this->client();
             $escapedName = str_replace("'", "\\'", $name);
 
             $query = "'{$parentFolderId}' in parents and name='{$escapedName}' and trashed=false";
@@ -298,7 +226,7 @@ class GoogleDriveService
                 $query .= " and mimeType='application/vnd.google-apps.folder'";
             }
 
-            $response = $client
+            $response = $this->oauthClient()
                 ->get('/files', [
                     'q' => $query,
                     'corpora' => 'allDrives',
@@ -334,9 +262,9 @@ class GoogleDriveService
      * or already present) or null on genuine failure/if disabled - callers
      * that need to detect real failures (to retry) rely on that distinction.
      */
-    public function uploadFile(string $localPath, string $parentFolderId, string $name, bool $useOAuth = false): ?array
+    public function uploadFile(string $localPath, string $parentFolderId, string $name): ?array
     {
-        if (!$useOAuth && !$this->isEnabled()) {
+        if (!$this->isOAuthEnabled()) {
             return null;
         }
 
@@ -346,7 +274,7 @@ class GoogleDriveService
             return null;
         }
 
-        $existing = $this->findChildByName($parentFolderId, $name, $useOAuth);
+        $existing = $this->findChildByName($parentFolderId, $name);
         if ($existing) {
             return $existing;
         }
@@ -355,7 +283,7 @@ class GoogleDriveService
         $sourceHandle = null;
 
         try {
-            $token = $useOAuth ? $this->oauthAccessToken() : $this->accessToken();
+            $token = $this->oauthAccessToken();
             $mimeType = mime_content_type($localPath) ?: 'application/octet-stream';
 
             $boundary = 'drive-' . bin2hex(random_bytes(16));
@@ -391,9 +319,7 @@ class GoogleDriveService
                 ->post(self::UPLOAD_URL . '/files?uploadType=multipart&supportsAllDrives=true&fields=id%2CwebViewLink')
                 ->throw();
 
-            if ($useOAuth) {
-                usleep(500000);
-            }
+            usleep(500000);
 
             return [
                 'id' => $response->json('id'),
@@ -423,12 +349,12 @@ class GoogleDriveService
      * id of the deepest folder, walking one level at a time. Returns null if
      * any segment along the way can't be found.
      */
-    public function resolveFolderPath(string $rootFolderId, array $pathSegments, bool $useOAuth = false): ?string
+    public function resolveFolderPath(string $rootFolderId, array $pathSegments): ?string
     {
         $currentId = $rootFolderId;
 
         foreach ($pathSegments as $segment) {
-            $child = $this->findChildByName($currentId, $segment, $useOAuth, foldersOnly: true);
+            $child = $this->findChildByName($currentId, $segment, foldersOnly: true);
             if (!$child) {
                 return null;
             }
@@ -436,65 +362,6 @@ class GoogleDriveService
         }
 
         return $currentId;
-    }
-
-    /**
-     * Create several independent folders under the same parent concurrently
-     * (one HTTP round-trip's worth of latency instead of one per folder).
-     * Returns a name => ['id' => ..., 'link' => ...] map; failed ones are omitted.
-     */
-    public function createFoldersConcurrently(array $names, string $parentFolderId, bool $useOAuth = false): array
-    {
-        if (empty($names) || (!$useOAuth && !$this->isEnabled())) {
-            return [];
-        }
-
-        $token = $useOAuth ? $this->oauthAccessToken() : $this->accessToken();
-
-        try {
-            $responses = Http::pool(fn ($pool) => collect($names)->map(
-                fn (string $name) => $pool->as($name)
-                    ->withToken($token)
-                    ->baseUrl(self::BASE_URL)
-                    ->acceptJson()
-                    ->post('/files?supportsAllDrives=true&fields=id%2CwebViewLink', [
-                        'name' => $name,
-                        'mimeType' => 'application/vnd.google-apps.folder',
-                        'parents' => [$parentFolderId],
-                    ])
-            )->all());
-        } catch (\Throwable $exception) {
-            $this->lastError = $exception->getMessage();
-            Log::error('Google Drive concurrent folder creation failed', [
-                'names' => $names,
-                'parent' => $parentFolderId,
-                'error' => $exception->getMessage(),
-            ]);
-
-            return [];
-        }
-
-        $results = [];
-        foreach ($names as $name) {
-            $response = $responses[$name] ?? null;
-            $fileId = $response?->successful() ? $response->json('id') : null;
-
-            if ($fileId) {
-                $results[$name] = [
-                    'id' => $fileId,
-                    'link' => $response->json('webViewLink'),
-                ];
-            } else {
-                Log::error('Google Drive concurrent folder creation: one folder failed', [
-                    'name' => $name,
-                    'parent' => $parentFolderId,
-                    'status' => $response?->status(),
-                    'body' => $response?->body(),
-                ]);
-            }
-        }
-
-        return $results;
     }
 
     /**
@@ -626,7 +493,7 @@ class GoogleDriveService
                 ->filter(fn ($role, $email) => !empty($email))
                 ->mapWithKeys(fn ($role, $email) => [strtolower(trim($email)) => $role]);
 
-            $existingByEmail = collect($this->listUserPermissions($driveId, $this->oauthClient()))
+            $existingByEmail = collect($this->listUserPermissions($driveId))
                 ->keyBy(fn ($permission) => strtolower($permission['emailAddress']));
 
             $connectedEmail = strtolower((string) $this->getOAuthConnectedEmail());
@@ -674,21 +541,18 @@ class GoogleDriveService
 
     /**
      * Grant a user access to a folder by email. Role: reader|commenter|writer.
-     * $useOAuth is for a folder that lives inside a per-card Shared Drive
-     * (the service account isn't a member of those).
      */
-    public function shareFolder(string $folderId, string $email, ?string $role = null, bool $useOAuth = false): bool
+    public function shareFolder(string $folderId, string $email, ?string $role = null): bool
     {
-        if (empty($folderId) || empty($email) || (!$useOAuth && !$this->isEnabled())) {
+        if (empty($folderId) || empty($email) || !$this->isOAuthEnabled()) {
             return false;
         }
 
         try {
-            $client = $useOAuth ? $this->oauthClient() : $this->client();
-            $client
+            $this->oauthClient()
                 ->post("/files/{$folderId}/permissions?supportsAllDrives=true", [
                     'type' => 'user',
-                    'role' => $role ?: $this->settings()->default_role,
+                    'role' => $role ?: 'writer',
                     'emailAddress' => $email,
                 ])
                 ->throw();
@@ -706,9 +570,9 @@ class GoogleDriveService
         }
     }
 
-    private function listUserPermissions(string $folderId, $client = null): array
+    private function listUserPermissions(string $folderId): array
     {
-        $response = ($client ?? $this->client())
+        $response = $this->oauthClient()
             ->get("/files/{$folderId}/permissions", [
                 'supportsAllDrives' => 'true',
                 'fields' => 'permissions(id, emailAddress, type, role, permissionDetails)',
@@ -743,14 +607,14 @@ class GoogleDriveService
      */
     public function revokeAccess(string $folderId, string $email): bool
     {
-        if (!$this->isEnabled() || empty($folderId) || empty($email)) {
+        if (!$this->isOAuthEnabled() || empty($folderId) || empty($email)) {
             return false;
         }
 
         try {
             foreach ($this->listUserPermissions($folderId) as $permission) {
                 if (strcasecmp((string) $permission['emailAddress'], $email) === 0) {
-                    $this->client()
+                    $this->oauthClient()
                         ->delete("/files/{$folderId}/permissions/{$permission['id']}?supportsAllDrives=true")
                         ->throw();
                 }
@@ -772,22 +636,20 @@ class GoogleDriveService
      * Sync a folder's user-type permissions to exactly match the given list of emails.
      * Emails not in the list are removed; emails in the list not yet shared are added.
      */
-    public function syncFolderMembers(string $folderId, array $emails, ?string $role = null, bool $useOAuth = false): void
+    public function syncFolderMembers(string $folderId, array $emails, ?string $role = null): void
     {
-        if (empty($folderId) || (!$useOAuth && !$this->isEnabled())) {
+        if (empty($folderId) || !$this->isOAuthEnabled()) {
             return;
         }
 
         try {
-            $client = $useOAuth ? $this->oauthClient() : $this->client();
-
             $wanted = collect($emails)
                 ->filter(fn ($email) => !empty($email))
                 ->map(fn ($email) => strtolower(trim($email)))
                 ->unique()
                 ->values();
 
-            $existingByEmail = collect($this->listUserPermissions($folderId, $useOAuth ? $client : null))
+            $existingByEmail = collect($this->listUserPermissions($folderId))
                 ->keyBy(fn ($permission) => strtolower($permission['emailAddress']));
 
             foreach ($existingByEmail as $email => $permission) {
@@ -796,7 +658,7 @@ class GoogleDriveService
                 }
 
                 try {
-                    $client
+                    $this->oauthClient()
                         ->delete("/files/{$folderId}/permissions/{$permission['id']}?supportsAllDrives=true")
                         ->throw();
                 } catch (\Throwable $exception) {
@@ -810,7 +672,7 @@ class GoogleDriveService
 
             foreach ($wanted as $email) {
                 if (!$existingByEmail->has($email)) {
-                    $this->shareFolder($folderId, $email, $role, $useOAuth);
+                    $this->shareFolder($folderId, $email, $role);
                 }
             }
         } catch (\Throwable $exception) {
