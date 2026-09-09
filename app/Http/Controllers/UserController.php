@@ -437,11 +437,13 @@ class UserController extends Controller
     // --- Toggle Google Drive access ---
     /**
      * Superadmin/admin accounts get automatic Manager access to every card's
-     * Google Drive folder. This cuts that off for one specific account (e.g.
-     * a compromised account) without touching their app role/permissions,
-     * and immediately re-syncs every existing card's Drive membership so the
+     * Google Drive folder; subadmin/counsellor get access to whichever cards
+     * they're a member of. Revoking cuts a specific account off from Drive
+     * access entirely - overriding card membership too, not just the
+     * auto-admin list - without touching their app role/permissions.
+     * Immediately re-syncs every existing card's Drive membership so the
      * change takes effect right away rather than waiting for each card's own
-     * next natural sync.
+     * next natural sync. Superadmin-only, regardless of the target's role.
      */
     public function toggleDriveAccess(int $id): JsonResponse
     {
@@ -451,12 +453,8 @@ class UserController extends Controller
             return response()->json(['message' => 'You cannot change your own Drive access'], 403);
         }
 
-        if (!$this->canManage($user)) {
-            return response()->json(['message' => 'Forbidden'], 403);
-        }
-
-        if (!in_array((int) $user->role_id, [1, 2], true)) {
-            return response()->json(['message' => 'Drive access only applies to superadmin/admin accounts'], 422);
+        if (!$this->isSuperAdmin()) {
+            return response()->json(['message' => 'Only superadmin can change Drive access'], 403);
         }
 
         $user->drive_access_revoked = !$user->drive_access_revoked;

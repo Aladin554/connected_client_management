@@ -180,7 +180,12 @@ class BoardCardController extends Controller
 
         $this->ensureClientUploadsSubfolder($card);
 
-        $members = $card->members()->get(['users.id', 'users.email', 'users.role_id']);
+        $members = $card->members()
+            ->get(['users.id', 'users.email', 'users.role_id', 'users.drive_access_revoked'])
+            // A superadmin can cut a specific account off from Drive access
+            // entirely (e.g. a compromised account) - this overrides card
+            // membership too, not just the auto-admin list.
+            ->reject(fn ($member) => (bool) $member->drive_access_revoked);
 
         $fullAccessEmails = $members
             ->filter(fn ($member) => $this->canBypassCardMemberVisibility($member))

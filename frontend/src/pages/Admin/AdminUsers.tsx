@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import api from "../../api/axios.ts";
-import { Trash2, Edit, Plus } from "lucide-react";
+import { Trash2, Edit, Plus, ShieldAlert } from "lucide-react";
 import { toast, ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 import { getMeCached } from "../../utils/me";
@@ -45,6 +45,7 @@ export default function AdminUsers() {
   const [selectAll, setSelectAll] = useState(false);
   const [deleteUserId, setDeleteUserId] = useState<number | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [driveAccessTarget, setDriveAccessTarget] = useState<User | null>(null);
   const [roleFilter, setRoleFilter] = useState<"all" | "2" | "3" | "4">("all");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
 
@@ -232,9 +233,11 @@ export default function AdminUsers() {
     }
   };
 
-  // Revoke/restore a superadmin/admin's automatic Google Drive access to
-  // every card - immediately re-syncs all cards on the backend.
-  const toggleDriveAccess = async (user: User) => {
+  // Revoke/restore a user's Google Drive access (removes/re-adds them across
+  // every card, immediately) - opens a confirmation modal first since this
+  // is a security-sensitive, immediately-effective action a stray click
+  // shouldn't be able to trigger.
+  const requestToggleDriveAccess = (user: User) => {
     if (currentUser?.id === user.id) {
       toast.error("You cannot change your own Drive access!");
       return;
@@ -244,6 +247,14 @@ export default function AdminUsers() {
       toast.warn("Only super administrators can change Drive access.");
       return;
     }
+
+    setDriveAccessTarget(user);
+  };
+
+  const performToggleDriveAccess = async () => {
+    const user = driveAccessTarget;
+    if (!user) return;
+    setDriveAccessTarget(null);
 
     const oldVal = user.drive_access_revoked;
     const optimistic = !oldVal;
@@ -509,21 +520,17 @@ export default function AdminUsers() {
                       </td>
 
                       <td className="px-4 py-3 border-r border-gray-200 dark:border-gray-700">
-                        {[1, 2].includes(user.role_id) ? (
-                          <button
-                            onClick={() => toggleDriveAccess(user)}
-                            title="Controls whether this account has automatic Manager access to every card's Google Drive folder"
-                            className={`px-3 py-1.5 rounded text-white text-sm font-medium transition ${
-                              user.drive_access_revoked
-                                ? "bg-red-600 hover:bg-red-700"
-                                : "bg-green-600 hover:bg-green-700"
-                            }`}
-                          >
-                            {user.drive_access_revoked ? "Revoked" : "Enabled"}
-                          </button>
-                        ) : (
-                          <span className="text-gray-400 dark:text-gray-600">-</span>
-                        )}
+                        <button
+                          onClick={() => requestToggleDriveAccess(user)}
+                          title="Controls whether this account can access this card's/every card's Google Drive folder"
+                          className={`px-3 py-1.5 rounded text-white text-sm font-medium transition ${
+                            user.drive_access_revoked
+                              ? "bg-red-600 hover:bg-red-700"
+                              : "bg-green-600 hover:bg-green-700"
+                          }`}
+                        >
+                          {user.drive_access_revoked ? "Revoked" : "Enabled"}
+                        </button>
                       </td>
                     </>
                   )}
@@ -605,19 +612,17 @@ export default function AdminUsers() {
                     </button>
                   </div>
 
-                  {[1, 2].includes(user.role_id) && (
-                    <div>
-                      <span className="text-gray-600 dark:text-gray-400">Drive Access:</span>
-                      <button
-                        onClick={() => toggleDriveAccess(user)}
-                        className={`ml-2 px-2 py-1 rounded text-white text-xs font-medium ${
-                          user.drive_access_revoked ? "bg-red-600" : "bg-green-600"
-                        }`}
-                      >
-                        {user.drive_access_revoked ? "Revoked" : "Enabled"}
-                      </button>
-                    </div>
-                  )}
+                  <div>
+                    <span className="text-gray-600 dark:text-gray-400">Drive Access:</span>
+                    <button
+                      onClick={() => requestToggleDriveAccess(user)}
+                      className={`ml-2 px-2 py-1 rounded text-white text-xs font-medium ${
+                        user.drive_access_revoked ? "bg-red-600" : "bg-green-600"
+                      }`}
+                    >
+                      {user.drive_access_revoked ? "Revoked" : "Enabled"}
+                    </button>
+                  </div>
                 </>
               )}
             </div>
@@ -704,6 +709,71 @@ export default function AdminUsers() {
                 className="flex-1 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition"
               >
                 Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DRIVE ACCESS CONFIRM MODAL */}
+      {driveAccessTarget && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-gray-800 rounded-2xl p-6 max-w-sm w-full shadow-2xl border border-gray-200 dark:border-gray-700">
+            <div className="text-center">
+              <div
+                className={`mx-auto w-12 h-12 rounded-full flex items-center justify-center mb-4 ${
+                  driveAccessTarget.drive_access_revoked
+                    ? "bg-green-100 dark:bg-green-900/30"
+                    : "bg-red-100 dark:bg-red-900/30"
+                }`}
+              >
+                <ShieldAlert
+                  className={
+                    driveAccessTarget.drive_access_revoked
+                      ? "text-green-600 dark:text-green-400"
+                      : "text-red-600 dark:text-red-400"
+                  }
+                  size={28}
+                />
+              </div>
+              <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100 mb-2">
+                {driveAccessTarget.drive_access_revoked ? "Restore" : "Revoke"} Drive Access?
+              </h3>
+              <p className="text-gray-600 dark:text-gray-400">
+                {driveAccessTarget.drive_access_revoked ? (
+                  <>
+                    <strong>
+                      {driveAccessTarget.first_name} {driveAccessTarget.last_name}
+                    </strong>{" "}
+                    will be re-added to every card's Google Drive folder they have access to, right now.
+                  </>
+                ) : (
+                  <>
+                    <strong>
+                      {driveAccessTarget.first_name} {driveAccessTarget.last_name}
+                    </strong>{" "}
+                    will be removed from every card's Google Drive folder immediately - they won't be
+                    able to see any Drive data until access is restored.
+                  </>
+                )}
+              </p>
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => setDriveAccessTarget(null)}
+                className="flex-1 py-2 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={performToggleDriveAccess}
+                className={`flex-1 py-2 text-white rounded-lg transition ${
+                  driveAccessTarget.drive_access_revoked
+                    ? "bg-green-600 hover:bg-green-700"
+                    : "bg-red-600 hover:bg-red-700"
+                }`}
+              >
+                {driveAccessTarget.drive_access_revoked ? "Restore Access" : "Revoke Access"}
               </button>
             </div>
           </div>
