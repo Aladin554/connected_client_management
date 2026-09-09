@@ -10,6 +10,7 @@ class GoogleDriveSetting extends Model
         'oauth_enabled',
         'oauth_refresh_token',
         'oauth_connected_email',
+        'shortcut_master_drive_id',
     ];
 
     protected $casts = [

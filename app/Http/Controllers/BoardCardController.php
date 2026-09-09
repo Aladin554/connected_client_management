@@ -8,6 +8,7 @@ use App\Models\BoardList;
 use App\Models\Activity;
 use App\Models\City;
 use App\Models\CountryLabel;
+use App\Models\GoogleDriveSetting;
 use App\Models\IntakeLabel;
 use App\Models\ServiceArea;
 use App\Models\User;
@@ -46,6 +47,55 @@ class BoardCardController extends Controller
             ->unique()
             ->reject(fn ($email) => $excluded->contains(strtolower(trim($email))))
             ->values();
+    }
+
+    /**
+     * Google Drive won't let a Shared Drive live inside a folder (or inside
+     * another Shared Drive), so there's no way to literally put every card's
+     * Shared Drive "inside" one master folder. The closest equivalent: one
+     * dedicated Shared Drive (lazily created, id cached on the settings row)
+     * that holds a shortcut into each card - shortcuts can't target a Shared
+     * Drive's root either, only a folder within one, so this points at the
+     * card's "Client Uploaded Files" subfolder. Opening it lands there, and
+     * since the viewer is a real member of the card's own Shared Drive,
+     * Drive's breadcrumb lets them navigate up to browse the whole card.
+     */
+    private function ensureCardShortcutInMasterDrive(BoardCard $card): void
+    {
+        if (!$card->google_drive_client_uploads_folder_id) {
+            return;
+        }
+
+        $settings = GoogleDriveSetting::current();
+        $masterDriveId = $settings->shortcut_master_drive_id;
+
+        if (!$masterDriveId) {
+            $masterName = config('services.google_drive.master_folder_name', 'Client 3.0');
+            $drive = $this->driveService->createSharedDrive($masterName);
+            if (!$drive) {
+                return;
+            }
+
+            // Same pacing precaution as a fresh per-card Shared Drive - see
+            // ensureCardDriveFolder().
+            sleep(3);
+
+            $masterDriveId = $drive['id'];
+            $settings->update(['shortcut_master_drive_id' => $masterDriveId]);
+        }
+
+        $connectedEmail = $this->driveService->getOAuthConnectedEmail();
+        $emailToRole = $this->driveEligibleAdminEmails()
+            ->mapWithKeys(fn ($email) => [$email => 'organizer'])
+            ->union($connectedEmail ? [$connectedEmail => 'organizer'] : [])
+            ->all();
+        $this->driveService->syncSharedDriveMembers($masterDriveId, $emailToRole);
+
+        $this->driveService->createShortcut(
+            $card->google_drive_client_uploads_folder_id,
+            $this->cardDriveFolderName($card),
+            $masterDriveId
+        );
     }
 
     private function cardDriveFolderName(BoardCard $card): string
@@ -176,6 +226,7 @@ class BoardCardController extends Controller
         }
 
         $this->ensureClientUploadsSubfolder($card);
+        $this->ensureCardShortcutInMasterDrive($card);
 
         $members = $card->members()->get(['users.id', 'users.email', 'users.role_id']);
 
