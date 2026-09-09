@@ -992,15 +992,13 @@ class BoardCardController extends Controller
             }
         }
 
-        if (array_key_exists('contact_email', $validated)) {
+        if (array_key_exists('contact_email', $validated) && $boardCard->google_drive_folder_id) {
             try {
-                // If this call just created the folder, BuildCardDriveFolderStructure
-                // is already dispatched and will build the structure + call
-                // syncCardDriveAccess itself once done - calling it again here
-                // would race it and create duplicate top-level subfolders.
-                if (!$this->ensureCardDriveFolder($boardCard)) {
-                    $this->syncCardDriveAccess($boardCard);
-                }
+                // Only re-syncs an EXISTING Drive folder's access - never creates
+                // one here. Folder creation happens exactly once, at card
+                // creation time (see store()); a card with no folder stays
+                // without one until an admin explicitly restores it.
+                $this->syncCardDriveAccess($boardCard);
             } catch (\Throwable $exception) {
                 // Card update succeeded; Drive permission sync is best-effort.
                 report($exception);
@@ -1624,14 +1622,15 @@ class BoardCardController extends Controller
 
         $boardCard->members()->sync($requestedIds->all());
 
-        try {
-            // See the contact_email branch above for why this is guarded.
-            if (!$this->ensureCardDriveFolder($boardCard)) {
+        if ($boardCard->google_drive_folder_id) {
+            try {
+                // Only re-syncs an EXISTING Drive folder's access - never
+                // creates one here. See the contact_email branch in update().
                 $this->syncCardDriveAccess($boardCard);
+            } catch (\Throwable $exception) {
+                // Member update succeeded; Drive permission sync is best-effort.
+                report($exception);
             }
-        } catch (\Throwable $exception) {
-            // Member update succeeded; Drive permission sync is best-effort.
-            report($exception);
         }
 
         $addedIds = $requestedIds->diff($existingMemberIds)->values()->all();
@@ -1681,7 +1680,11 @@ class BoardCardController extends Controller
         ]);
     }
 
-    // GET Google Drive folder info for a card (lazily creates the folder if missing)
+    // GET Google Drive folder info for a card. Read-only - never creates a
+    // folder. Folder creation happens exactly once, at card creation time
+    // (see store()); a card that has none (e.g. never had one, or had its
+    // Drive data wiped) simply reports folder_link: null instead of a new
+    // one being silently created just because someone opened the card.
     public function driveInfo(BoardCard $boardCard)
     {
         $this->assertCanReadBoardCard($boardCard);
@@ -1694,17 +1697,12 @@ class BoardCardController extends Controller
             ]);
         }
 
-        try {
-            // Same race as above: if this request is the one that creates the
-            // folder, BuildCardDriveFolderStructure already owns building the
-            // rest of the structure in the background - don't duplicate it by
-            // also creating "Client Uploaded Files" synchronously here just
-            // because the job hasn't reached it yet.
-            if (!$this->ensureCardDriveFolder($boardCard)) {
+        if ($boardCard->google_drive_folder_id) {
+            try {
                 $this->ensureClientUploadsSubfolder($boardCard);
+            } catch (\Throwable $exception) {
+                report($exception);
             }
-        } catch (\Throwable $exception) {
-            report($exception);
         }
 
         $boardCard->refresh();
