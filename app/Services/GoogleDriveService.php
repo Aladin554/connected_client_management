@@ -167,6 +167,28 @@ class GoogleDriveService
             return null;
         }
 
+        // The check-then-create below isn't atomic on its own: the background
+        // BuildCardDriveFolderStructure job and an on-demand HTTP path (e.g.
+        // ensureClientUploadsSubfolder(), triggered just by opening a brand
+        // new card's detail modal) can both ask "does this folder exist yet?"
+        // at the same moment, both get "no", and both create it - producing
+        // two folders with the same name under the same parent. Serializing
+        // per (parent, name) closes that window for every caller, not just
+        // job-vs-job overlap (which WithoutOverlapping already covers).
+        $lock = Cache::lock('gdrive-create-folder:' . $parentFolderId . ':' . md5($name), 30);
+
+        try {
+            return $lock->block(15, fn () => $this->createFolderUnlocked($name, $parentFolderId));
+        } catch (\Throwable $exception) {
+            // Couldn't get the lock in time - fall back to a best-effort
+            // direct attempt (still exists-checked) rather than failing
+            // outright just because another caller is briefly holding it.
+            return $this->createFolderUnlocked($name, $parentFolderId);
+        }
+    }
+
+    private function createFolderUnlocked(string $name, string $parentFolderId): ?array
+    {
         $existing = $this->findChildByName($parentFolderId, $name, foldersOnly: true);
         if ($existing) {
             return $existing;
