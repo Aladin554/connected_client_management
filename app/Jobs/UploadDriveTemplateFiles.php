@@ -89,20 +89,13 @@ class UploadDriveTemplateFiles implements ShouldQueue
 
         // uploadFile()/resolveFolderPath() are both idempotent, so retrying
         // this job after a partial failure only redoes what's still missing.
+        // Note: google_drive_ready_at (gates the Drive link UI) is set by
+        // BuildCardDriveFolderStructure right after sharing, not here - file
+        // uploads have no bearing on whether the link is accessible.
         if (!empty($failures)) {
             throw new \RuntimeException(
                 "Google Drive template file upload incomplete for card {$card->id}: " . implode(', ', $failures)
             );
-        }
-
-        // Dispatched only after BuildCardDriveFolderStructure has already run
-        // syncCardDriveAccess() (see there), so by the time every template
-        // file above has uploaded without failure, the folder tree is fully
-        // built AND shared with the contact - the UI gates showing/copying
-        // the Drive link on this flag so a link is never handed out before
-        // everything behind it actually exists.
-        if (!$card->google_drive_ready_at) {
-            $card->update(['google_drive_ready_at' => now()]);
         }
     }
 }

@@ -102,13 +102,14 @@ class BuildCardDriveFolderStructure implements ShouldQueue
             }
         }
 
+        // syncCardDriveAccess() shares "Client Uploaded Files" with the
+        // contact and, as its last step, marks the card google_drive_ready_at
+        // - the flag that gates showing/copying the Drive link in the UI.
+        // Template file uploads (below) are a separate, slower background
+        // concern with no bearing on link access, so this must not wait on
+        // UploadDriveTemplateFiles finishing first.
         $controller->syncCardDriveAccess($card->fresh());
 
-        // Dispatched only after syncCardDriveAccess() so the contact is
-        // already shared on "Client Uploaded Files" by the time this runs -
-        // UploadDriveTemplateFiles is what marks the card "ready" (see its
-        // own handle()), and that flag is what gates showing/copying the
-        // Drive link in the UI, so it must not fire before sharing is done.
         UploadDriveTemplateFiles::dispatch($card);
 
         // Throwing (instead of silently finishing "successfully" with gaps)

@@ -238,7 +238,21 @@ class BoardCardController extends Controller
             );
         }
 
-        $card->update(['google_drive_synced_at' => now()]);
+        $updates = ['google_drive_synced_at' => now()];
+
+        // "Ready" (gates showing/copying the Drive link in the UI - see
+        // driveInfo()) means "Client Uploaded Files" exists and has just
+        // been shared, right here - not that template files have finished
+        // uploading (a separate, slower, unrelated background concern).
+        // Set from this single method so every path that syncs access -
+        // the BuildCardDriveFolderStructure job, or an on-demand backfill
+        // via driveInfo()/update()/updateMembers() for an older card - marks
+        // it ready the same way, instead of only the job's own first run.
+        if ($card->google_drive_client_uploads_folder_id && !$card->google_drive_ready_at) {
+            $updates['google_drive_ready_at'] = now();
+        }
+
+        $card->update($updates);
     }
 
     private function isCommissionBoardName(?string $name): bool
