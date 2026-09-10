@@ -359,6 +359,24 @@ export default function BoardView() {
     }
   };
 
+  // Poll the board while any visible card's Drive folder is still being
+  // built (folder_id set but ready_at not yet) so the "Creating..." badge on
+  // the card tile flips to "Done" without the user manually refreshing.
+  // Re-arms itself off the `board` dependency after every fetch and stops
+  // scheduling once nothing is pending anymore.
+  useEffect(() => {
+    const hasPendingDrive = (board?.lists || []).some((list) =>
+      (list.cards || []).some((c) => c.google_drive_folder_id && !c.google_drive_ready_at)
+    );
+    if (!hasPendingDrive) return;
+
+    const timer = window.setTimeout(() => {
+      void fetchBoard();
+    }, 15000);
+
+    return () => window.clearTimeout(timer);
+  }, [board]);
+
   const fetchArchivedCards = async () => {
     if (!boardId) return;
 

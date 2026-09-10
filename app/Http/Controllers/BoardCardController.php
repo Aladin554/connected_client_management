@@ -1719,10 +1719,22 @@ class BoardCardController extends Controller
         // "Client Uploaded Files", not the drive root. Opening the root link
         // without drive membership shows Google's "You need access" screen,
         // so hand out the folder they can actually open once it exists.
+        //
+        // Withheld until google_drive_ready_at is set - i.e. every template
+        // folder/file has finished building AND the contact has actually
+        // been shared on "Client Uploaded Files" (see UploadDriveTemplateFiles
+        // and BuildCardDriveFolderStructure). Handing out the link earlier
+        // risks either a 404 (folder not created yet) or a "You need access"
+        // screen (created but not shared yet).
+        $ready = (bool) $boardCard->google_drive_ready_at;
+
         return response()->json([
             'enabled' => true,
+            'ready' => $ready,
             'folder_id' => $boardCard->google_drive_folder_id,
-            'folder_link' => $boardCard->google_drive_client_uploads_folder_link ?: $boardCard->google_drive_folder_link,
+            'folder_link' => $ready
+                ? ($boardCard->google_drive_client_uploads_folder_link ?: $boardCard->google_drive_folder_link)
+                : null,
             'scope' => 'full',
             'error' => $boardCard->google_drive_folder_id ? null : $this->driveService->getLastError(),
             'synced_at' => $boardCard->google_drive_synced_at,

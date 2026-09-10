@@ -1,5 +1,5 @@
 import type { MouseEvent as ReactMouseEvent } from "react";
-import { Mail, SquarePen, Tag } from "lucide-react";
+import { CheckCircle2, Loader2, Mail, SquarePen, Tag } from "lucide-react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { Card, CardLabelBadge } from "./types";
@@ -39,6 +39,11 @@ export default function DraggableCard({
   const previewLabelBadges = labelBadges.filter(
     (label) => label.kind === "country" || label.kind === "intake"
   );
+  // Drive folder build runs in the background after card creation - surface
+  // its progress right on the tile instead of leaving it silent until
+  // someone opens the card.
+  const driveCreating = Boolean(card.google_drive_folder_id) && !card.google_drive_ready_at;
+  const driveReady = Boolean(card.google_drive_ready_at);
 
   const stopEventPropagation = (event: ReactMouseEvent<HTMLElement>) => {
     event.stopPropagation();
@@ -94,7 +99,10 @@ export default function DraggableCard({
           )}
         </div>
 
-        {(previewLabelBadges.length > 0 || (card.members && card.members.length > 0)) && (
+        {(previewLabelBadges.length > 0 ||
+          (card.members && card.members.length > 0) ||
+          driveCreating ||
+          driveReady) && (
           <div className="mt-4 flex w-full items-start gap-2">
             {previewLabelBadges.length > 0 ? (
               <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto whitespace-nowrap no-scrollbar pr-1">
@@ -116,26 +124,47 @@ export default function DraggableCard({
               <div className="flex-1" />
             )}
 
-            {card.members && card.members.length > 0 ? (
-              <div className="ml-auto -mr-1 flex shrink-0 flex-row-reverse items-center justify-end -space-x-1 space-x-reverse">
-                {card.members.slice(0, 3).map((member, index) => (
-                  <div
-                    key={`card-${card.id}-member-${member.id}`}
-                    className={`h-5 w-5 rounded-full border border-white text-white text-[9px] font-semibold flex items-center justify-center ${
-                      MEMBER_SHORTCUT_COLORS[(member.id + index) % MEMBER_SHORTCUT_COLORS.length]
-                    }`}
-                    title={`${member.first_name || ""} ${member.last_name || ""}`.trim() || "Member"}
-                  >
-                    {getMemberInitials(member)}
-                  </div>
-                ))}
-                {card.members.length > 3 && (
-                  <div className="mr-1 text-[10px] font-semibold text-gray-500">
-                    +{card.members.length - 3}
-                  </div>
-                )}
-              </div>
-            ) : null}
+            <div className="ml-auto -mr-1 flex shrink-0 items-center gap-2">
+              {driveCreating && (
+                <span
+                  className="flex shrink-0 items-center gap-1 text-[10px] font-semibold text-amber-600"
+                  title="Google Drive folders are being created"
+                >
+                  <Loader2 size={11} className="animate-spin" />
+                  Creating...
+                </span>
+              )}
+              {driveReady && (
+                <span
+                  className="flex shrink-0 items-center"
+                  title="Google Drive folder ready"
+                  aria-label="Google Drive folder ready"
+                >
+                  <CheckCircle2 size={14} className="text-emerald-600" />
+                </span>
+              )}
+
+              {card.members && card.members.length > 0 ? (
+                <div className="flex shrink-0 flex-row-reverse items-center justify-end -space-x-1 space-x-reverse">
+                  {card.members.slice(0, 3).map((member, index) => (
+                    <div
+                      key={`card-${card.id}-member-${member.id}`}
+                      className={`h-5 w-5 rounded-full border border-white text-white text-[9px] font-semibold flex items-center justify-center ${
+                        MEMBER_SHORTCUT_COLORS[(member.id + index) % MEMBER_SHORTCUT_COLORS.length]
+                      }`}
+                      title={`${member.first_name || ""} ${member.last_name || ""}`.trim() || "Member"}
+                    >
+                      {getMemberInitials(member)}
+                    </div>
+                  ))}
+                  {card.members.length > 3 && (
+                    <div className="mr-1 text-[10px] font-semibold text-gray-500">
+                      +{card.members.length - 3}
+                    </div>
+                  )}
+                </div>
+              ) : null}
+            </div>
           </div>
         )}
       </div>

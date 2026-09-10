@@ -139,14 +139,19 @@ export default function CardDetailModal({
 
   // Google Drive folder
   const [driveEnabled, setDriveEnabled] = useState(false);
-  const [driveFolderLink, setDriveFolderLink] = useState<string | null>(
-    card.google_drive_folder_link || null
-  );
+  // Not seeded from card.google_drive_folder_link - that's the root link and
+  // is only safe to use once the backend confirms driveReady (see fetchDriveInfo).
+  const [driveFolderLink, setDriveFolderLink] = useState<string | null>(null);
+  const [driveReady, setDriveReady] = useState(false);
   const [driveMembers, setDriveMembers] = useState<CardMember[]>([]);
   const [driveOpening, setDriveOpening] = useState(false);
   const [driveError, setDriveError] = useState<string | null>(null);
   const [copyingDriveLink, setCopyingDriveLink] = useState(false);
   const [driveLinkCopied, setDriveLinkCopied] = useState(false);
+  // True only once we know Drive is enabled for this card but it isn't
+  // ready yet - if Drive isn't enabled at all, leave the buttons clickable
+  // instead of looking like they're stuck "preparing" forever.
+  const drivePreparing = driveEnabled && !driveReady && !driveFolderLink;
 
   const canEditCardIdentity = [1, 2, 3].includes(Number(profile?.role_id));
   const canManagePaymentStatus = [1, 2, 3].includes(Number(profile?.role_id));
@@ -185,7 +190,8 @@ export default function CardDetailModal({
     setMemberSearchTerm("");
     setMembersError(null);
     setCanManageMembers([1, 2, 3, 4].includes(Number(profile?.role_id)));
-    setDriveFolderLink(card.google_drive_folder_link || null);
+    setDriveFolderLink(null);
+    setDriveReady(false);
     setDriveMembers([]);
     fetchActivities();
     void fetchCardMembers();
@@ -343,22 +349,29 @@ export default function CardDetailModal({
     await fetchCardMembers();
   };
 
-  const fetchDriveInfo = async (): Promise<{ link: string | null; enabled: boolean; error: string | null }> => {
+  const fetchDriveInfo = async (): Promise<{
+    link: string | null;
+    enabled: boolean;
+    ready: boolean;
+    error: string | null;
+  }> => {
     try {
       const res = await api.get(`/cards/${card.id}/drive-info`);
       const enabled = Boolean(res.data?.enabled);
+      const ready = Boolean(res.data?.ready);
       const link = res.data?.folder_link || null;
       const error = res.data?.error || null;
       setDriveEnabled(enabled);
+      setDriveReady(ready);
       setDriveFolderLink(link);
       setDriveMembers(Array.isArray(res.data?.members) ? res.data.members : []);
       setDriveError(error);
-      return { link, enabled, error };
+      return { link, enabled, ready, error };
     } catch (err) {
       console.error("Failed to fetch Google Drive info:", err);
       const error = "Could not reach the server to check Google Drive status.";
       setDriveError(error);
-      return { link: null, enabled: driveEnabled, error };
+      return { link: null, enabled: driveEnabled, ready: driveReady, error };
     }
   };
 
@@ -372,11 +385,15 @@ export default function CardDetailModal({
 
     setDriveOpening(true);
     try {
-      const { link, enabled, error } = await fetchDriveInfo();
+      const { link, enabled, ready, error } = await fetchDriveInfo();
       if (link) {
         window.open(link, "_blank", "noopener,noreferrer");
       } else if (!enabled) {
         alert("Google Drive integration is not enabled for this app yet.");
+      } else if (!ready) {
+        alert(
+          "Google Drive folder is still being prepared (creating folders and uploading template files). Please try again in a few minutes."
+        );
       } else {
         alert(
           `Google Drive folder could not be created/found.\n\nSource: Google Drive API\nReason: ${
@@ -394,9 +411,15 @@ export default function CardDetailModal({
 
     setCopyingDriveLink(true);
     try {
-      const link = driveFolderLink || (await fetchDriveInfo()).link;
+      const { link, ready } = driveFolderLink
+        ? { link: driveFolderLink, ready: driveReady }
+        : await fetchDriveInfo();
       if (!link) {
-        alert("Google Drive folder is not available for this card yet.");
+        alert(
+          ready
+            ? "Google Drive folder is not available for this card yet."
+            : "Google Drive folder is still being prepared (creating folders and uploading template files). Please try again in a few minutes."
+        );
         return;
       }
       await navigator.clipboard.writeText(link);
@@ -1302,23 +1325,28 @@ export default function CardDetailModal({
     {card.due_date ? formatDateWithOrdinal(card.due_date) : "Due Dates"}
   </button>
 
-  {/* Google Drive folder */}
+  {/* Google Drive folder - disabled until every folder/file for this card
+      has finished building and the contact has been shared on it
+      (driveReady from /drive-info), so a link is never handed out before
+      it's actually accessible. Only applies once we know Drive is enabled -
+      otherwise leave the button clickable so it can surface the "not
+      enabled" message instead of looking like it's forever "preparing". */}
   <button
     type="button"
     onClick={() => void handleOpenDrive()}
-    disabled={driveOpening}
-    title="Open the Google Drive folder for this card"
+    disabled={driveOpening || drivePreparing}
+    title={drivePreparing ? "Drive folder is still being prepared" : "Open the Google Drive folder for this card"}
     className="h-10 px-3 rounded-md bg-[#0f9d58] text-white text-sm font-bold border border-[#0f9d58] hover:brightness-95 transition flex items-center gap-1.5 disabled:opacity-60 disabled:cursor-not-allowed"
   >
     <FolderOpen size={15} strokeWidth={2.2} className="text-white/90" />
-    {driveOpening ? "Opening..." : "Google Drive"}
+    {driveOpening ? "Opening..." : drivePreparing ? "Preparing..." : "Google Drive"}
   </button>
 
   <button
     type="button"
     onClick={() => void handleCopyDriveLink()}
-    disabled={copyingDriveLink}
-    title="Copy Google Drive folder link"
+    disabled={copyingDriveLink || drivePreparing}
+    title={drivePreparing ? "Drive folder is still being prepared" : "Copy Google Drive folder link"}
     aria-label="Copy Google Drive folder link"
     className={`h-10 px-3 rounded-md text-sm font-bold border transition flex items-center gap-1.5 disabled:opacity-60 disabled:cursor-not-allowed ${
       driveLinkCopied
@@ -1327,7 +1355,7 @@ export default function CardDetailModal({
     }`}
   >
     {driveLinkCopied ? <Check size={15} className="text-white/90" /> : <Copy size={15} className="text-white/90" />}
-    {driveLinkCopied ? "Copied" : copyingDriveLink ? "Copying..." : "Drive link"}
+    {driveLinkCopied ? "Copied" : copyingDriveLink ? "Copying..." : drivePreparing ? "Preparing..." : "Drive link"}
   </button>
 </div>
 

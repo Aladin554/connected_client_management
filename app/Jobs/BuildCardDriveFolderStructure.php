@@ -102,9 +102,14 @@ class BuildCardDriveFolderStructure implements ShouldQueue
             }
         }
 
-        UploadDriveTemplateFiles::dispatch($card);
-
         $controller->syncCardDriveAccess($card->fresh());
+
+        // Dispatched only after syncCardDriveAccess() so the contact is
+        // already shared on "Client Uploaded Files" by the time this runs -
+        // UploadDriveTemplateFiles is what marks the card "ready" (see its
+        // own handle()), and that flag is what gates showing/copying the
+        // Drive link in the UI, so it must not fire before sharing is done.
+        UploadDriveTemplateFiles::dispatch($card);
 
         // Throwing (instead of silently finishing "successfully" with gaps)
         // is what makes $tries/$backoff above actually retry a partial

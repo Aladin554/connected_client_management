@@ -40,6 +40,7 @@ class BoardCard extends Model
         'google_drive_client_uploads_folder_id',
         'google_drive_client_uploads_folder_link',
         'google_drive_synced_at',
+        'google_drive_ready_at',
         'google_drive_own_shared_drive',
     ];
 
@@ -61,6 +62,7 @@ class BoardCard extends Model
         'dependant_payment_done' => 'boolean',
         'is_archived' => 'boolean',
         'google_drive_synced_at' => 'datetime',
+        'google_drive_ready_at' => 'datetime',
         'google_drive_own_shared_drive' => 'boolean',
     ];
 

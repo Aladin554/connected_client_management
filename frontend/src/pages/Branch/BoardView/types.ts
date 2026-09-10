@@ -24,6 +24,7 @@ export interface Card {
   google_drive_folder_id?: string | null;
   google_drive_folder_link?: string | null;
   google_drive_client_uploads_folder_link?: string | null;
+  google_drive_ready_at?: string | null;
 }
 
 export interface List {
