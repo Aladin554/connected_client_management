@@ -1713,13 +1713,16 @@ class BoardCardController extends Controller
             ->orderBy('users.last_name')
             ->get();
 
-        // Everyone with access to the card's Shared Drive is a real member of
-        // it, so there's no separate "client_uploads only" link to hand out -
-        // the main link IS their access.
+        // Staff are real members of the whole Shared Drive and can browse it
+        // directly from Google Drive itself, so this link is really for
+        // sharing with the contact - who only has item-level access to
+        // "Client Uploaded Files", not the drive root. Opening the root link
+        // without drive membership shows Google's "You need access" screen,
+        // so hand out the folder they can actually open once it exists.
         return response()->json([
             'enabled' => true,
             'folder_id' => $boardCard->google_drive_folder_id,
-            'folder_link' => $boardCard->google_drive_folder_link,
+            'folder_link' => $boardCard->google_drive_client_uploads_folder_link ?: $boardCard->google_drive_folder_link,
             'scope' => 'full',
             'error' => $boardCard->google_drive_folder_id ? null : $this->driveService->getLastError(),
             'synced_at' => $boardCard->google_drive_synced_at,
