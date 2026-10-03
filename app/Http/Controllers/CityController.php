@@ -6,6 +6,7 @@ use App\Models\Board;
 use App\Models\City;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class CityController extends Controller
@@ -126,29 +127,79 @@ class CityController extends Controller
         $validated = $request->validate([
             'name'   => 'required|string|max:255|unique:cities,name,' . $city->id,
             'boards' => 'nullable|array',
-            'boards.*' => 'string|max:255',
+            // Each entry is {id?, name} (current frontend) or a plain name (older clients).
+            'boards.*' => 'required',
         ]);
 
-        try {
-            $city->update(['name' => $validated['name']]);
+        $syncBoards = array_key_exists('boards', $validated);
+        $existing = $city->boards()->withCount('lists')->get()->keyBy('id');
+        $entries = collect();
 
-            // Safer approach: sync board names (delete missing, keep existing, add new)
-            if (array_key_exists('boards', $validated)) {
-                $currentNames = $city->boards->pluck('name')->toArray();
-                $newNames     = $validated['boards'] ?? [];
+        if ($syncBoards) {
+            foreach ($validated['boards'] ?? [] as $entry) {
+                $id = is_array($entry) && isset($entry['id']) ? (int) $entry['id'] : null;
+                $name = trim((string) (is_array($entry) ? ($entry['name'] ?? '') : $entry));
 
-                // Remove boards that are no longer in the list
-                $toDelete = $city->boards->whereNotIn('name', $newNames);
-                $city->boards()->whereIn('id', $toDelete->pluck('id'))->delete();
-
-                // Add new boards
-                $toAdd = array_diff($newNames, $currentNames);
-                if (!empty($toAdd)) {
-                    $city->boards()->createMany(
-                        collect($toAdd)->map(fn($name) => ['name' => $name])
-                    );
+                if ($name === '') {
+                    continue;
                 }
+                if (mb_strlen($name) > 255) {
+                    return response()->json(['message' => 'Board names may not be longer than 255 characters.'], 422);
+                }
+                if ($id !== null && !$existing->has($id)) {
+                    return response()->json(['message' => "Board #{$id} does not belong to this city."], 422);
+                }
+                // Plain names from older clients: match an existing board by name
+                // so it is kept rather than treated as removed.
+                if ($id === null) {
+                    $id = $existing->first(fn ($board) => $board->name === $name)?->id;
+                }
+
+                $entries->push(['id' => $id, 'name' => $name]);
             }
+
+            $keptIds = $entries->pluck('id')->filter()->all();
+            if (count($keptIds) !== count(array_unique($keptIds))) {
+                return response()->json(['message' => 'The same board is listed more than once.'], 422);
+            }
+
+            // A board missing from the submitted list is only ever removed when it
+            // is empty. Deleting a board cascades to all of its lists, cards,
+            // members and card assignments, so a board holding work is refused
+            // outright instead of being silently wiped (renames keep the board id).
+            $blocked = $existing->except($keptIds)->filter(fn ($board) => $board->lists_count > 0);
+            if ($blocked->isNotEmpty()) {
+                return response()->json([
+                    'message' => 'Not saved: ' . $blocked->pluck('name')->implode(', ')
+                        . ' still has lists and cards, so it can\'t be removed from the city. '
+                        . 'To rename a board, edit its name instead of removing it.',
+                ], 422);
+            }
+        }
+
+        try {
+            DB::transaction(function () use ($city, $validated, $syncBoards, $existing, $entries) {
+                $city->update(['name' => $validated['name']]);
+
+                if (!$syncBoards) {
+                    return;
+                }
+
+                foreach ($entries as $entry) {
+                    if ($entry['id'] === null) {
+                        $city->boards()->create(['name' => $entry['name']]);
+                    } elseif ($existing[$entry['id']]->name !== $entry['name']) {
+                        $existing[$entry['id']]->update(['name' => $entry['name']]);
+                    }
+                }
+
+                // Only empty boards can reach this point (checked above).
+                // pluck('id'), not keys(): Eloquent's except() re-indexes the collection.
+                $removedIds = $existing->except($entries->pluck('id')->filter()->all())->pluck('id');
+                if ($removedIds->isNotEmpty()) {
+                    $city->boards()->whereIn('id', $removedIds)->doesntHave('lists')->delete();
+                }
+            });
 
             return response()->json([
                 'message' => 'City updated successfully',
@@ -170,8 +221,18 @@ class CityController extends Controller
             return response()->json(['message' => 'Unauthorized – superadmin only'], 403);
         }
 
+        // Deleting a city cascades to its boards and from there to every list and
+        // card on them, so refuse while any of its boards still holds work.
+        $busyBoards = $city->boards()->has('lists')->pluck('name');
+        if ($busyBoards->isNotEmpty()) {
+            return response()->json([
+                'message' => 'This city can\'t be deleted while these boards still have lists and cards: '
+                    . $busyBoards->implode(', ') . '.',
+            ], 422);
+        }
+
         try {
-            $city->delete(); // assumes cascade or manual cleanup if needed
+            $city->delete();
             return response()->json(['message' => 'City and associated boards deleted']);
         } catch (\Exception $e) {
             Log::error('City deletion failed', ['error' => $e->getMessage()]);

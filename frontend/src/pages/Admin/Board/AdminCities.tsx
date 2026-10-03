@@ -95,7 +95,10 @@ export default function AdminCities() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingCity, setEditingCity] = useState<City | null>(null);
   const [cityName, setCityName] = useState("");
-  const [boardNames, setBoardNames] = useState<string[]>([""]);
+  // Existing boards keep their id so the backend renames them in place; a
+  // name-only list made it look like "delete old board, create new one",
+  // which cascaded away every list and card on the renamed board.
+  const [boardNames, setBoardNames] = useState<{ id?: number; name: string }[]>([{ name: "" }]);
 
   // Delete modal
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
@@ -258,14 +261,14 @@ export default function AdminCities() {
   const openAddCity = () => {
     setEditingCity(null);
     setCityName("");
-    setBoardNames([""]);
+    setBoardNames([{ name: "" }]);
     setModalOpen(true);
   };
 
   const openEditCity = (city: City) => {
     setEditingCity(city);
     setCityName(city.name);
-    setBoardNames(city.boards.map((b) => b.name));
+    setBoardNames(city.boards.map((b) => ({ id: b.id, name: b.name })));
     setModalOpen(true);
   };
 
@@ -275,19 +278,21 @@ export default function AdminCities() {
       return;
     }
 
-    const validBoards = boardNames.filter((name) => name.trim() !== "");
+    const validBoards = boardNames
+      .map((board) => ({ ...board, name: board.name.trim() }))
+      .filter((board) => board.name !== "");
 
     try {
       if (editingCity) {
         await api.put(`/cities/${editingCity.id}`, {
           name: cityName.trim(),
-          boards: validBoards,
+          boards: validBoards.map((board) => (board.id ? { id: board.id, name: board.name } : { name: board.name })),
         });
         toast.success("City updated");
       } else {
         await api.post("/cities", {
           name: cityName.trim(),
-          boards: validBoards,
+          boards: validBoards.map((board) => board.name),
         });
         toast.success("City created");
       }
@@ -309,8 +314,8 @@ export default function AdminCities() {
       await api.delete(`/cities/${deleteId}`);
       toast.success("City deleted");
       fetchCities();
-    } catch {
-      toast.error("Failed to delete city");
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || "Failed to delete city");
     } finally {
       setDeleteModalOpen(false);
       setDeleteId(null);
@@ -319,7 +324,7 @@ export default function AdminCities() {
 
   // Board input handlers
   const addBoard = () => {
-    setBoardNames((prev) => [...prev, ""]);
+    setBoardNames((prev) => [...prev, { name: "" }]);
   };
 
   const removeBoard = (index: number) => {
@@ -328,7 +333,7 @@ export default function AdminCities() {
 
   const updateBoard = (index: number, value: string) => {
     setBoardNames((prev) =>
-      prev.map((name, i) => (i === index ? value : name))
+      prev.map((board, i) => (i === index ? { ...board, name: value } : board))
     );
   };
 
@@ -656,9 +661,9 @@ export default function AdminCities() {
             <div className="mb-4">
               <p className="font-medium mb-2">Boards</p>
               {boardNames.map((board, index) => (
-                <div key={index} className="flex gap-2 mb-2">
+                <div key={board.id ?? `new-${index}`} className="flex gap-2 mb-2">
                   <input
-                    value={board}
+                    value={board.name}
                     onChange={(e) => updateBoard(index, e.target.value)}
                     className="flex-1 px-3 py-2 border rounded dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200"
                     placeholder={`Board ${index + 1}`}
