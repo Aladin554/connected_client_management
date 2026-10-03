@@ -20,6 +20,9 @@ import { sanitizeHtml } from "../../../utils/sanitizeHtml";
 
 const LazyDatePicker = lazy(() => import("react-datepicker"));
 
+const NO_DRIVE_FOLDER_MESSAGE =
+  "This card has no Google Drive folder. It was created before Google Drive was set up, and folders are only created for new cards.";
+
 const escapeHtml = (value: string): string =>
   value
     .replace(/&/g, "&amp;")
@@ -143,6 +146,7 @@ export default function CardDetailModal({
   // is only safe to use once the backend confirms driveReady (see fetchDriveInfo).
   const [driveFolderLink, setDriveFolderLink] = useState<string | null>(null);
   const [driveReady, setDriveReady] = useState(false);
+  const [driveHasFolder, setDriveHasFolder] = useState(false);
   const [driveMembers, setDriveMembers] = useState<CardMember[]>([]);
   const [driveOpening, setDriveOpening] = useState(false);
   const [driveError, setDriveError] = useState<string | null>(null);
@@ -151,7 +155,11 @@ export default function CardDetailModal({
   // True only once we know Drive is enabled for this card but it isn't
   // ready yet - if Drive isn't enabled at all, leave the buttons clickable
   // instead of looking like they're stuck "preparing" forever.
-  const drivePreparing = driveEnabled && !driveReady && !driveFolderLink;
+  const drivePreparing = driveEnabled && driveHasFolder && !driveReady && !driveFolderLink;
+  // Drive is enabled but this card has no folder at all (e.g. created before
+  // Drive was set up). Folders are only created when a card is created, so
+  // this never resolves by itself - say so instead of "Preparing..." forever.
+  const driveMissing = driveEnabled && !driveHasFolder && !driveFolderLink;
 
   const canEditCardIdentity = [1, 2, 3].includes(Number(profile?.role_id));
   const canManagePaymentStatus = [1, 2, 3].includes(Number(profile?.role_id));
@@ -352,26 +360,29 @@ export default function CardDetailModal({
   const fetchDriveInfo = async (): Promise<{
     link: string | null;
     enabled: boolean;
+    hasFolder: boolean;
     ready: boolean;
     error: string | null;
   }> => {
     try {
       const res = await api.get(`/cards/${card.id}/drive-info`);
       const enabled = Boolean(res.data?.enabled);
+      const hasFolder = Boolean(res.data?.has_folder ?? res.data?.folder_id);
       const ready = Boolean(res.data?.ready);
       const link = res.data?.folder_link || null;
       const error = res.data?.error || null;
       setDriveEnabled(enabled);
+      setDriveHasFolder(hasFolder);
       setDriveReady(ready);
       setDriveFolderLink(link);
       setDriveMembers(Array.isArray(res.data?.members) ? res.data.members : []);
       setDriveError(error);
-      return { link, enabled, ready, error };
+      return { link, enabled, hasFolder, ready, error };
     } catch (err) {
       console.error("Failed to fetch Google Drive info:", err);
       const error = "Could not reach the server to check Google Drive status.";
       setDriveError(error);
-      return { link: null, enabled: driveEnabled, ready: driveReady, error };
+      return { link: null, enabled: driveEnabled, hasFolder: driveHasFolder, ready: driveReady, error };
     }
   };
 
@@ -385,11 +396,13 @@ export default function CardDetailModal({
 
     setDriveOpening(true);
     try {
-      const { link, enabled, ready, error } = await fetchDriveInfo();
+      const { link, enabled, hasFolder, ready, error } = await fetchDriveInfo();
       if (link) {
         window.open(link, "_blank", "noopener,noreferrer");
       } else if (!enabled) {
         alert("Google Drive integration is not enabled for this app yet.");
+      } else if (!hasFolder && !error) {
+        alert(NO_DRIVE_FOLDER_MESSAGE);
       } else if (!ready) {
         alert(
           "Google Drive folder is still being prepared (creating folders and uploading template files). Please try again in a few minutes."
@@ -411,12 +424,14 @@ export default function CardDetailModal({
 
     setCopyingDriveLink(true);
     try {
-      const { link, ready } = driveFolderLink
-        ? { link: driveFolderLink, ready: driveReady }
+      const { link, hasFolder, ready } = driveFolderLink
+        ? { link: driveFolderLink, hasFolder: true, ready: driveReady }
         : await fetchDriveInfo();
       if (!link) {
         alert(
-          ready
+          !hasFolder
+            ? NO_DRIVE_FOLDER_MESSAGE
+            : ready
             ? "Google Drive folder is not available for this card yet."
             : "Google Drive folder is still being prepared (creating folders and uploading template files). Please try again in a few minutes."
         );
@@ -1334,19 +1349,31 @@ export default function CardDetailModal({
   <button
     type="button"
     onClick={() => void handleOpenDrive()}
-    disabled={driveOpening || drivePreparing}
-    title={drivePreparing ? "Drive folder is still being prepared" : "Open the Google Drive folder for this card"}
+    disabled={driveOpening || drivePreparing || driveMissing}
+    title={
+      driveMissing
+        ? NO_DRIVE_FOLDER_MESSAGE
+        : drivePreparing
+        ? "Drive folder is still being prepared"
+        : "Open the Google Drive folder for this card"
+    }
     className="h-10 px-3 rounded-md bg-[#0f9d58] text-white text-sm font-bold border border-[#0f9d58] hover:brightness-95 transition flex items-center gap-1.5 disabled:opacity-60 disabled:cursor-not-allowed"
   >
     <FolderOpen size={15} strokeWidth={2.2} className="text-white/90" />
-    {driveOpening ? "Opening..." : drivePreparing ? "Preparing..." : "Google Drive"}
+    {driveOpening ? "Opening..." : driveMissing ? "No Drive folder" : drivePreparing ? "Preparing..." : "Google Drive"}
   </button>
 
   <button
     type="button"
     onClick={() => void handleCopyDriveLink()}
-    disabled={copyingDriveLink || drivePreparing}
-    title={drivePreparing ? "Drive folder is still being prepared" : "Copy Google Drive folder link"}
+    disabled={copyingDriveLink || drivePreparing || driveMissing}
+    title={
+      driveMissing
+        ? NO_DRIVE_FOLDER_MESSAGE
+        : drivePreparing
+        ? "Drive folder is still being prepared"
+        : "Copy Google Drive folder link"
+    }
     aria-label="Copy Google Drive folder link"
     className={`h-10 px-3 rounded-md text-sm font-bold border transition flex items-center gap-1.5 disabled:opacity-60 disabled:cursor-not-allowed ${
       driveLinkCopied

@@ -1706,6 +1706,7 @@ class BoardCardController extends Controller
         if (!$this->driveService->isOAuthEnabled() && !$boardCard->google_drive_folder_id) {
             return response()->json([
                 'enabled' => false,
+                'has_folder' => false,
                 'folder_link' => null,
                 'members' => [],
             ]);
@@ -1744,6 +1745,10 @@ class BoardCardController extends Controller
 
         return response()->json([
             'enabled' => true,
+            // The folder is created synchronously in store(), so a card
+            // without one (e.g. created before Drive was set up) will never
+            // become ready on its own - the UI must not show it as "preparing".
+            'has_folder' => (bool) $boardCard->google_drive_folder_id,
             'ready' => $ready,
             'folder_id' => $boardCard->google_drive_folder_id,
             'folder_link' => $ready
