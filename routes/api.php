@@ -6,7 +6,6 @@ use App\Http\Controllers\BoardController;
 use App\Http\Controllers\BoardListController;
 use App\Http\Controllers\CityController;
 use App\Http\Controllers\CountryLabelController;
-use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\GoogleDriveOAuthController;
 use App\Http\Controllers\GoogleDriveSettingController;
 use App\Http\Controllers\IntakeLabelController;
@@ -117,9 +116,8 @@ Route::middleware(['auth:sanctum', CheckPanelAccess::class, 'admin.ip'])->group(
     Route::post('/activities', [BoardCardController::class, 'logActivity']);
 
     // ────────────────────────────────────────────────
-    // Dashboard & Labels
+    // Labels
     // ────────────────────────────────────────────────
-    Route::get('/dashboard-counts', [DashboardController::class, 'index']);
     Route::apiResource('country-labels', CountryLabelController::class);
     Route::apiResource('intake-labels', IntakeLabelController::class);
     Route::apiResource('service-areas', ServiceAreaController::class);
