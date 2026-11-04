@@ -10,7 +10,7 @@ import "tinymce/plugins/lists";
 import "tinymce/skins/ui/oxide/skin.min.css";
 import "tinymce/skins/ui/oxide/content.min.css";
 import "tinymce/skins/content/default/content.min.css";
-import { Archive, BarChart3, Image as ImageIcon, Bell, Calendar, Check, Copy, CreditCard, FolderOpen, MessageSquare, MoreHorizontal, Paperclip, Plus, SquarePen, Star, Users, X } from "lucide-react";
+import { Archive, BarChart3, Image as ImageIcon, Bell, Calendar, Check, Copy, CreditCard, FolderOpen, MessageSquare, MoreHorizontal, Paperclip, Plus, SquarePen, Star, User, Users, X } from "lucide-react";
 import api from "../../../api/axios";
 import "react-datepicker/dist/react-datepicker.css";
 import type { Activity, Card, CardMember, Profile } from "./types";
@@ -1389,9 +1389,10 @@ export default function CardDetailModal({
                       type="button"
                       onClick={handleOpenMembersModal}
                       title={getMemberDisplayName(member)}
-                      className="h-10 max-w-full px-3 rounded-md bg-sky-50 text-sky-700 text-sm font-bold border border-sky-200 hover:bg-sky-100 transition truncate"
+                      className="h-10 max-w-full px-3 rounded-md bg-sky-600 text-white text-sm font-bold border border-sky-600 hover:brightness-95 transition flex items-center gap-1.5"
                     >
-                      {getMemberDisplayName(member)}
+                      <User size={15} strokeWidth={2.2} className="shrink-0 text-white/90" />
+                      <span className="truncate font-bold">{getMemberDisplayName(member)}</span>
                     </button>
                   ))}
                   <button
