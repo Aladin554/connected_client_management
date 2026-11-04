@@ -317,14 +317,6 @@ export default function CardDetailModal({
     return fullName || member.email || `User #${member.id}`;
   };
 
-  const getMemberInitials = (member: CardMember): string => {
-    const first = (member.first_name || "").trim().charAt(0);
-    const last = (member.last_name || "").trim().charAt(0);
-    const fallback = (member.email || "").trim().charAt(0);
-    const initials = `${first}${last}`.trim() || fallback;
-    return (initials || "U").toUpperCase();
-  };
-
   const fetchCardMembers = async () => {
     setMembersLoading(true);
     setMembersError(null);
@@ -1390,22 +1382,22 @@ export default function CardDetailModal({
             <div className="space-y-6">
               <div>
                 <p className="text-sm font-bold text-gray-700 mb-2.5">Members</p>
-                <div className="flex items-center gap-2">
-                  {memberPreview.slice(0, 3).map((member) => (
+                <div className="flex flex-wrap items-center gap-2">
+                  {memberPreview.map((member) => (
                     <button
                       key={member.id}
                       type="button"
                       onClick={handleOpenMembersModal}
                       title={getMemberDisplayName(member)}
-                      className="h-10 w-10 rounded-full bg-sky-600 text-white text-sm font-bold flex items-center justify-center hover:brightness-110 transition"
+                      className="h-10 max-w-full px-3 rounded-md bg-sky-50 text-sky-700 text-sm font-bold border border-sky-200 hover:bg-sky-100 transition truncate"
                     >
-                      {getMemberInitials(member)}
+                      {getMemberDisplayName(member)}
                     </button>
                   ))}
                   <button
                     type="button"
                     onClick={handleOpenMembersModal}
-                    className="h-10 w-10 rounded-full bg-gray-200 text-gray-700 text-xl flex items-center justify-center hover:bg-gray-300 transition"
+                    className="h-10 w-10 rounded-md bg-gray-100 text-gray-600 border border-gray-200 flex items-center justify-center hover:bg-gray-200 transition"
                     title="Manage members"
                   >
                     <Plus size={18} />
