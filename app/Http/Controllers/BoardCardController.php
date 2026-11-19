@@ -676,6 +676,20 @@ class BoardCardController extends Controller
         return trim($key);
     }
 
+    /**
+     * The description with all spacing removed: whitespace, &nbsp;, line breaks
+     * and paragraph/div wrappers. Two descriptions with the same key differ only
+     * in spacing/blank lines. Other markup (bold, links, ...) is kept, so
+     * formatting changes still count.
+     */
+    private function descriptionTextKey(string $html): string
+    {
+        $key = html_entity_decode($html, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $key = preg_replace('/<\/?(?:br|p|div)\b[^>]*>/i', '', $key) ?? $key;
+
+        return preg_replace('/[\s\x{00A0}]+/u', '', $key) ?? $key;
+    }
+
     private function formatActivityChange(?string $oldValue, ?string $newValue, ?int $limit = 180): string
     {
         return $this->formatActivityValue($oldValue, $limit) . ' -> ' . $this->formatActivityValue($newValue, $limit);
@@ -1435,13 +1449,17 @@ class BoardCardController extends Controller
             'description' => $validated['description'] ?? null,
         ]);
 
-        Activity::create([
-            'user_id'   => Auth::id(),
-            'user_name' => $this->userFullName(),
-            'card_id'   => $boardCard->id,
-            'action'    => 'updated description',
-            'details'   => 'Description: ' . $this->formatActivityChange($beforeDescription, $nextDescription, null),
-        ]);
+        // Spacing-only edits (spaces, blank lines, line breaks) are saved but not
+        // added to the card history; only real text/formatting changes are.
+        if ($this->descriptionTextKey($beforeDescription) !== $this->descriptionTextKey($nextDescription)) {
+            Activity::create([
+                'user_id'   => Auth::id(),
+                'user_name' => $this->userFullName(),
+                'card_id'   => $boardCard->id,
+                'action'    => 'updated description',
+                'details'   => 'Description: ' . $this->formatActivityChange($beforeDescription, $nextDescription, null),
+            ]);
+        }
 
         return response()->json($boardCard->fresh());
     }

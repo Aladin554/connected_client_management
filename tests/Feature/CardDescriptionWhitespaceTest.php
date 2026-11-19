@@ -45,7 +45,7 @@ class CardDescriptionWhitespaceTest extends TestCase
         $this->assertSame(1, Activity::where('card_id', $card->id)->where('action', 'updated description')->count());
     }
 
-    public function test_removing_a_space_between_words_is_saved(): void
+    public function test_removing_a_space_between_words_is_saved_without_history(): void
     {
         [$user, $card] = $this->makeCard('Study Gap: No');
         Sanctum::actingAs($user);
@@ -53,6 +53,41 @@ class CardDescriptionWhitespaceTest extends TestCase
         $this->putJson("/api/cards/{$card->id}/description", ['description' => 'StudyGap: No'])->assertOk();
 
         $this->assertSame('StudyGap: No', $card->fresh()->description);
+        $this->assertSame(0, Activity::where('card_id', $card->id)->count());
+    }
+
+    public function test_adding_blank_lines_and_nbsp_is_saved_without_history(): void
+    {
+        [$user, $card] = $this->makeCard('Name: Ashraf<br>Phone: 0198');
+        Sanctum::actingAs($user);
+
+        $next = 'Name: Ashraf&nbsp;<br>&nbsp;<br>&nbsp;<br>Phone: 0198<br>&nbsp;';
+        $this->putJson("/api/cards/{$card->id}/description", ['description' => $next])->assertOk();
+
+        $this->assertSame($next, $card->fresh()->description);
+        $this->assertSame(0, Activity::where('card_id', $card->id)->count());
+    }
+
+    public function test_plain_text_converted_to_html_lines_is_not_logged(): void
+    {
+        [$user, $card] = $this->makeCard("Grades & Stream: SSC\nGap: No");
+        Sanctum::actingAs($user);
+
+        $this->putJson("/api/cards/{$card->id}/description", [
+            'description' => 'Grades &amp; Stream: SSC<br>Gap: No',
+        ])->assertOk();
+
+        $this->assertSame(0, Activity::where('card_id', $card->id)->count());
+    }
+
+    public function test_formatting_change_is_still_logged(): void
+    {
+        [$user, $card] = $this->makeCard('Gap: No');
+        Sanctum::actingAs($user);
+
+        $this->putJson("/api/cards/{$card->id}/description", ['description' => '<strong>Gap: No</strong>'])->assertOk();
+
+        $this->assertSame(1, Activity::where('card_id', $card->id)->count());
     }
 
     private function makeCard(string $description): array
