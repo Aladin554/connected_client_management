@@ -1,5 +1,6 @@
 import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { Editor } from "@tinymce/tinymce-react";
+import type { Editor as TinyMCEEditor } from "tinymce";
 import "tinymce/tinymce";
 import "tinymce/icons/default";
 import "tinymce/themes/silver";
@@ -20,6 +21,72 @@ import { Globe, Tag, CalendarDays } from 'lucide-react';
 import { sanitizeHtml } from "../../../utils/sanitizeHtml";
 
 const LazyDatePicker = lazy(() => import("react-datepicker"));
+
+type PendingDescriptionCaret = {
+  // Non-whitespace characters before the click, so the spot can be found again
+  // in the editor even if TinyMCE normalises the HTML/whitespace.
+  visibleOffset: number;
+  // true: caret goes right after that character (click at a word/line end);
+  // false: right before the next one (click at a line start).
+  preferAfter: boolean;
+  clientY: number;
+  scrollParent: HTMLElement | null;
+};
+
+type CaretDocument = Document & {
+  caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+  caretRangeFromPoint?: (x: number, y: number) => Range | null;
+};
+
+const getCaretRangeAtPoint = (x: number, y: number): Range | null => {
+  const doc = document as unknown as CaretDocument;
+  if (typeof doc.caretPositionFromPoint === "function") {
+    const pos = doc.caretPositionFromPoint(x, y);
+    if (!pos) return null;
+    const range = document.createRange();
+    range.setStart(pos.offsetNode, pos.offset);
+    range.collapse(true);
+    return range;
+  }
+  if (typeof doc.caretRangeFromPoint === "function") return doc.caretRangeFromPoint(x, y);
+  return null;
+};
+
+const getScrollParent = (el: HTMLElement | null): HTMLElement | null => {
+  let node = el?.parentElement ?? null;
+  while (node) {
+    const { overflowY } = window.getComputedStyle(node);
+    if ((overflowY === "auto" || overflowY === "scroll") && node.scrollHeight > node.clientHeight) {
+      return node;
+    }
+    node = node.parentElement;
+  }
+  return null;
+};
+
+const findTextPosition = (
+  root: Node,
+  visibleOffset: number,
+  preferAfter: boolean
+): { node: Text; offset: number } | null => {
+  const doc = root.ownerDocument;
+  if (!doc) return null;
+  const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let seen = 0;
+  let lastText: Text | null = null;
+  for (let current = walker.nextNode(); current; current = walker.nextNode()) {
+    const text = current as Text;
+    const value = text.data;
+    for (let i = 0; i < value.length; i += 1) {
+      if (/\s/.test(value[i])) continue;
+      if (!preferAfter && seen === visibleOffset) return { node: text, offset: i };
+      seen += 1;
+      if (preferAfter && seen === visibleOffset) return { node: text, offset: i + 1 };
+    }
+    lastText = text;
+  }
+  return lastText ? { node: lastText, offset: lastText.data.length } : null;
+};
 
 const NO_DRIVE_FOLDER_MESSAGE =
   "This card has no Google Drive folder. It was created before Google Drive was set up, and folders are only created for new cards.";
@@ -102,6 +169,11 @@ export default function CardDetailModal({
   );
   const [savingDescription, setSavingDescription] = useState(false);
   const descriptionSaveInFlightRef = useRef(false);
+  const descriptionViewRef = useRef<HTMLDivElement | null>(null);
+  const pendingDescriptionCaretRef = useRef<PendingDescriptionCaret | null>(null);
+  // Keeps the editor at least as tall as the text it replaces while TinyMCE loads,
+  // so the scroll position isn't clamped and the view doesn't jump up.
+  const [descriptionEditorMinHeight, setDescriptionEditorMinHeight] = useState<number | null>(null);
 
   // Due Date
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -630,9 +702,80 @@ export default function CardDetailModal({
     }
   };
 
-  const openDescriptionEditor = () => {
+  const openDescriptionEditor = (event?: React.MouseEvent<HTMLElement>) => {
+    pendingDescriptionCaretRef.current = null;
+    setDescriptionEditorMinHeight(null);
+
+    const viewEl = descriptionViewRef.current;
+    if (event && viewEl) {
+      const range = getCaretRangeAtPoint(event.clientX, event.clientY);
+      if (range && viewEl.contains(range.startContainer)) {
+        const before = document.createRange();
+        before.setStart(viewEl, 0);
+        before.setEnd(range.startContainer, range.startOffset);
+        const container = range.startContainer;
+        const preferAfter =
+          container.nodeType === Node.TEXT_NODE &&
+          range.startOffset > 0 &&
+          !/\s/.test((container as Text).data[range.startOffset - 1] ?? "");
+        pendingDescriptionCaretRef.current = {
+          visibleOffset: before.toString().replace(/\s/g, "").length,
+          preferAfter,
+          clientY: event.clientY,
+          scrollParent: getScrollParent(viewEl),
+        };
+      }
+      setDescriptionEditorMinHeight(viewEl.offsetHeight);
+    }
+
     setEditedDescription(descriptionToHtml(card.description?.trim() ? card.description : DESCRIPTION_TEMPLATE));
     setIsEditingDescription(true);
+  };
+
+  const handleDescriptionEditorInit = (_event: unknown, editor: TinyMCEEditor) => {
+    const pending = pendingDescriptionCaretRef.current;
+    pendingDescriptionCaretRef.current = null;
+    if (!pending) {
+      setDescriptionEditorMinHeight(null);
+      return;
+    }
+
+    // Give autoresize a moment to grow the editor to its full height first.
+    window.setTimeout(() => {
+      try {
+        const pos = findTextPosition(editor.getBody(), pending.visibleOffset, pending.preferAfter);
+        if (pos) {
+          const rng = editor.getDoc().createRange();
+          rng.setStart(pos.node, pos.offset);
+          rng.collapse(true);
+          editor.selection.setRng(rng);
+        }
+        editor.focus();
+
+        // Scroll so the caret sits on the same screen line the user clicked.
+        const iframe = editor.iframeElement;
+        const scrollParent = pending.scrollParent;
+        if (iframe && scrollParent) {
+          const caretRange = editor.selection.getRng();
+          let rect = caretRange.getClientRects()[0] ?? caretRange.getBoundingClientRect();
+          if (!rect || (rect.top === 0 && rect.height === 0)) {
+            const holder =
+              caretRange.startContainer.nodeType === Node.ELEMENT_NODE
+                ? (caretRange.startContainer as Element)
+                : caretRange.startContainer.parentElement;
+            if (holder) rect = holder.getBoundingClientRect();
+          }
+          if (rect) {
+            const caretMiddle = iframe.getBoundingClientRect().top + rect.top + rect.height / 2;
+            scrollParent.scrollTop += caretMiddle - pending.clientY;
+          }
+        }
+      } catch (err) {
+        console.error("Could not place description caret", err);
+      } finally {
+        setDescriptionEditorMinHeight(null);
+      }
+    }, 60);
   };
 
   const openCardIdentityEditor = () => {
@@ -1455,7 +1598,7 @@ export default function CardDetailModal({
                   </div>
                 ) : (
                   <button
-                    onClick={openDescriptionEditor}
+                    onClick={() => openDescriptionEditor()}
                     className="flex items-center gap-1.5 text-sm text-indigo-600 hover:text-indigo-800 font-bold transition"
                   >
                     <SquarePen size={14} />
@@ -1465,9 +1608,13 @@ export default function CardDetailModal({
               </div>
 
               {isEditingDescription ? (
-                <div className="p-5">
+                <div
+                  className="p-5"
+                  style={descriptionEditorMinHeight ? { minHeight: descriptionEditorMinHeight } : undefined}
+                >
                   <Editor
                     disabled={savingDescription}
+                    onInit={handleDescriptionEditorInit}
                     value={editedDescription}
                     onEditorChange={(content) => setEditedDescription(content)}
                     onBlur={(_event, editor) => void handleSaveDescription(editor.getContent())}
@@ -1495,7 +1642,8 @@ export default function CardDetailModal({
                 </div>
               ) : (
                 <div
-                  onClick={openDescriptionEditor}
+                  ref={descriptionViewRef}
+                  onClick={(event) => openDescriptionEditor(event)}
                   className="px-5 py-5 text-sm text-gray-800 leading-relaxed cursor-pointer hover:bg-white/40 transition [&_p]:m-0 [&_div]:m-0 [&_br]:block [&_a]:text-indigo-600 [&_a]:underline"
                   title="Click to edit description"
                 >
