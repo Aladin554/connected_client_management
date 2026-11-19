@@ -113,6 +113,16 @@ const normalizeDescriptionHtml = (value: string): string =>
     .replace(/(<br\s*\/?>\s*)+$/gi, "")
     .trim();
 
+// Comparison key that ignores whitespace the browser never renders (runs of
+// spaces/newlines, and spaces next to line/block tags). The editor rewrites that
+// whitespace on its own, so without this just opening and leaving the editor
+// "changed" the description and logged an activity.
+const descriptionCompareKey = (html: string): string =>
+  html
+    .replace(/\s+/g, " ")
+    .replace(/\s*(<\/?(?:br|p|div|li|ul|ol|h[1-6])\b[^>]*>)\s*/gi, "$1")
+    .trim();
+
 const getVisibleDescriptionText = (value: string): string =>
   value
     .replace(/<style[\s\S]*?<\/style>/gi, "")
@@ -678,7 +688,7 @@ export default function CardDetailModal({
     const normalized = normalizeDescriptionHtml(nextContent ?? editedDescription);
     const nextDescription = getVisibleDescriptionText(normalized) ? normalized : "";
     const currentDescription = normalizeDescriptionHtml(descriptionToHtml(card.description || ""));
-    if (nextDescription === currentDescription) {
+    if (descriptionCompareKey(nextDescription) === descriptionCompareKey(currentDescription)) {
       setIsEditingDescription(false);
       return;
     }

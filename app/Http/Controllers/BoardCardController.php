@@ -663,6 +663,19 @@ class BoardCardController extends Controller
         return '"' . $singleLine . '"';
     }
 
+    /**
+     * Ignore whitespace the browser never renders (runs of spaces/newlines and
+     * spaces next to line/block tags), so an editor re-save that only rewrites
+     * whitespace is not stored or logged as a description change.
+     */
+    private function descriptionCompareKey(string $html): string
+    {
+        $key = preg_replace('/\s+/u', ' ', $html) ?? $html;
+        $key = preg_replace('/\s*(<\/?(?:br|p|div|li|ul|ol|h[1-6])\b[^>]*>)\s*/i', '$1', $key) ?? $key;
+
+        return trim($key);
+    }
+
     private function formatActivityChange(?string $oldValue, ?string $newValue, ?int $limit = 180): string
     {
         return $this->formatActivityValue($oldValue, $limit) . ' -> ' . $this->formatActivityValue($newValue, $limit);
@@ -1414,7 +1427,7 @@ class BoardCardController extends Controller
         ]);
 
         $nextDescription = (string) ($validated['description'] ?? '');
-        if (trim($beforeDescription) === trim($nextDescription)) {
+        if ($this->descriptionCompareKey($beforeDescription) === $this->descriptionCompareKey($nextDescription)) {
             return response()->json($boardCard->fresh());
         }
 
