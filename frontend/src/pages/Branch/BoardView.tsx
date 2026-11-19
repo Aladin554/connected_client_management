@@ -2221,6 +2221,8 @@ export default function BoardView() {
       });
     };
 
+    // Every list stays visible while searching/filtering (only its cards are
+    // filtered), so cards can still be dragged into lists with no matches.
     const filterLists = (source: List[]): ListWithSearchMeta[] => {
       return source
         .map((list) => {
@@ -2248,17 +2250,6 @@ export default function BoardView() {
             totalCards,
             matchedByTitle,
           };
-        })
-        .filter((list) => {
-          if (!hasTextSearch && !hasActiveFilters) return true;
-          if (hasActiveFilters) {
-            const hasSelectedMemberListAccess =
-              selectedMemberFilterId !== "" &&
-              allowListFallbackForSelectedMember &&
-              (selectedMemberAllowedListIds?.has(Number(list.id)) ?? false);
-            return list.cards.length > 0 || hasSelectedMemberListAccess;
-          }
-          return list.matchedByTitle || list.cards.length > 0;
         });
     };
 
@@ -3131,9 +3122,7 @@ export default function BoardView() {
                             )
                           ) : (
                             <div className="w-[22rem] h-28 rounded-xl border border-dashed border-indigo-300 bg-indigo-50/50 text-indigo-800 text-sm flex items-center justify-center">
-                              {isSearching || hasActiveFilters
-                                ? "No matching cards in commission board"
-                                : "No commission board lists"}
+                              No commission board lists
                             </div>
                           )}
                         </div>
@@ -3159,7 +3148,7 @@ export default function BoardView() {
                             )
                           ) : (
                             <div className="w-[22rem] h-28 rounded-xl border border-dashed border-sky-300 bg-sky-50/50 text-sky-800 text-sm flex items-center justify-center">
-                              {isSearching || hasActiveFilters ? "No matching cards in later intake" : "No later intake lists"}
+                              No later intake lists
                             </div>
                           )}
                         </div>
@@ -3185,7 +3174,7 @@ export default function BoardView() {
                             )
                           ) : (
                             <div className="w-[22rem] h-28 rounded-xl border border-dashed border-emerald-300 bg-emerald-50/50 text-emerald-800 text-sm flex items-center justify-center">
-                              {isSearching || hasActiveFilters ? "No matching cards in admission" : "No admission lists"}
+                              No admission lists
                             </div>
                           )}
                         </div>
@@ -3211,7 +3200,7 @@ export default function BoardView() {
                             )
                           ) : (
                             <div className="w-[22rem] h-28 rounded-xl border border-dashed border-amber-300 bg-amber-50/50 text-amber-800 text-sm flex items-center justify-center">
-                              {isSearching || hasActiveFilters ? "No matching cards in visa" : "No visa lists"}
+                              No visa lists
                             </div>
                           )}
                         </div>
@@ -3237,7 +3226,7 @@ export default function BoardView() {
                             )
                           ) : (
                             <div className="w-[22rem] h-28 rounded-xl border border-dashed border-rose-300 bg-rose-50/50 text-rose-800 text-sm flex items-center justify-center">
-                              {isSearching || hasActiveFilters ? "No matching cards in dependant visa" : "No dependant visa lists"}
+                              No dependant visa lists
                             </div>
                           )}
                         </div>
