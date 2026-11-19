@@ -5,6 +5,7 @@ import "tinymce/icons/default";
 import "tinymce/themes/silver";
 import "tinymce/models/dom";
 import "tinymce/plugins/autolink";
+import "tinymce/plugins/autoresize";
 import "tinymce/plugins/link";
 import "tinymce/plugins/lists";
 import "tinymce/skins/ui/oxide/skin.min.css";
@@ -1472,14 +1473,16 @@ export default function CardDetailModal({
                     onBlur={(_event, editor) => void handleSaveDescription(editor.getContent())}
                     init={{
                       license_key: "gpl",
-                      height: 300,
+                      // Grow with the content so the whole description is visible while editing.
+                      min_height: 300,
+                      autoresize_bottom_margin: 16,
                       menubar: false,
                       branding: false,
                       promotion: false,
                       statusbar: false,
                       skin: false,
                       content_css: false,
-                      plugins: ["autolink", "link", "lists"],
+                      plugins: ["autolink", "autoresize", "link", "lists"],
                       toolbar:
                         "undo redo | fontfamily fontsize | bold italic underline | forecolor backcolor | bullist numlist | link removeformat",
                       font_family_formats:
