@@ -1,5 +1,6 @@
 import {
   Dispatch,
+  KeyboardEvent as ReactKeyboardEvent,
   MouseEvent,
   SetStateAction,
   WheelEvent,
@@ -48,8 +49,12 @@ import { getMeCached } from "../../utils/me";
 import CardDetailModal from "./BoardView/CardDetailModal";
 import DraggableCard from "./BoardView/DraggableCard";
 import DroppableList from "./BoardView/DroppableList";
+import SearchResults, { type SearchResult } from "./BoardView/SearchResults";
 import type { Board, BoardActivity, Card, CardLabelBadge, LabelOption, List, Profile } from "./BoardView/types";
 import { formatDateWithOrdinal, formatFileSize, formatTimestamp, parseDateOnly } from "./BoardView/utils";
+
+const MAX_SEARCH_RESULTS = 50;
+const SEARCH_RESULTS_ID = "board-search-results";
 
 const ROLE_NAME_BY_ID: Record<number, string> = {
   1: "superadmin",
@@ -233,6 +238,8 @@ export default function BoardView() {
   const [loadingCommissionTargets, setLoadingCommissionTargets] = useState(false);
   const [commissionTargetsError, setCommissionTargetsError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
+  const [showSearchResults, setShowSearchResults] = useState(false);
+  const [activeSearchIndex, setActiveSearchIndex] = useState(0);
   const [moveBlockedMessage, setMoveBlockedMessage] = useState<string | null>(null);
   const [showFilterMenu, setShowFilterMenu] = useState(false);
   const [showThemeMenu, setShowThemeMenu] = useState(false);
@@ -276,6 +283,7 @@ export default function BoardView() {
   const [intakeLabelMap, setIntakeLabelMap] = useState<Record<number, string>>({});
   const [serviceAreaMap, setServiceAreaMap] = useState<Record<number, string>>({});
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const searchBoxRef = useRef<HTMLDivElement | null>(null);
   const filterSearchInputRef = useRef<HTMLInputElement | null>(null);
   const themeMenuRef = useRef<HTMLDivElement | null>(null);
   const filterMenuRef = useRef<HTMLDivElement | null>(null);
@@ -848,6 +856,24 @@ export default function BoardView() {
     openListActionMenuId,
     cardActionMenu,
   ]);
+
+  useEffect(() => {
+    if (!showSearchResults) return;
+
+    const handleOutsideClick = (event: globalThis.MouseEvent) => {
+      if (!searchBoxRef.current) return;
+      if (!searchBoxRef.current.contains(event.target as Node)) {
+        setShowSearchResults(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleOutsideClick);
+    return () => document.removeEventListener("mousedown", handleOutsideClick);
+  }, [showSearchResults]);
+
+  useEffect(() => {
+    setActiveSearchIndex(0);
+  }, [deferredSearchTerm]);
 
   useEffect(() => {
     if (!showThemeMenu) return;
@@ -2318,6 +2344,84 @@ export default function BoardView() {
     serviceAreaMap,
   ]);
 
+  // Results for the dropdown under the search box. Cards whose invoice or name
+  // matches come before cards that only match on description, labels, members...
+  const searchResults = useMemo<SearchResult[]>(() => {
+    if (!isSearching || showWildcardMatchCounts) return [];
+
+    const terms = deferredSearchTerm.split(/\s+/).filter(Boolean);
+    const toResults = (sectionTitle: string, lists: ListWithSearchMeta[]) =>
+      lists.flatMap((list) =>
+        list.cards.map((card) => ({ card, listTitle: list.title, sectionTitle }))
+      );
+    const matches = [
+      ...toResults("Commission", commissionBoardLists),
+      ...toResults("Later Intake", laterIntakeLists),
+      ...toResults("Admission", admissionLists),
+      ...toResults("Visa", visaLists),
+      ...toResults("Dependant Visa", dependantVisaLists),
+    ];
+    const matchesIdentity = ({ card }: SearchResult) => {
+      const identity = `${card.invoice || ""} ${card.first_name || ""} ${card.last_name || ""}`.toLowerCase();
+      return terms.every((term) => identity.includes(term));
+    };
+
+    return [
+      ...matches.filter(matchesIdentity),
+      ...matches.filter((match) => !matchesIdentity(match)),
+    ];
+  }, [
+    isSearching,
+    showWildcardMatchCounts,
+    deferredSearchTerm,
+    commissionBoardLists,
+    laterIntakeLists,
+    admissionLists,
+    visaLists,
+    dependantVisaLists,
+  ]);
+  const visibleSearchResults = searchResults.slice(0, MAX_SEARCH_RESULTS);
+  const searchResultsOpen =
+    showSearchResults &&
+    isSearching &&
+    !showWildcardMatchCounts &&
+    searchTerm.trim().length > 0;
+
+  const openSearchResult = (card: Card) => {
+    setShowSearchResults(false);
+    searchInputRef.current?.blur();
+    setSelectedCard(card);
+  };
+
+  const handleSearchKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (event.nativeEvent.isComposing) return;
+
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      if (!searchResultsOpen) {
+        setShowSearchResults(true);
+        return;
+      }
+      const lastIndex = visibleSearchResults.length - 1;
+      const step = event.key === "ArrowDown" ? 1 : -1;
+      setActiveSearchIndex((prev) => Math.max(0, Math.min(lastIndex, prev + step)));
+      return;
+    }
+
+    if (event.key === "Enter" && searchResultsOpen) {
+      event.preventDefault();
+      // The list is computed from the deferred term; ignore Enter until it catches up.
+      if (searchTerm.trim().toLowerCase() !== deferredSearchTerm) return;
+      const result = visibleSearchResults[activeSearchIndex];
+      if (result) openSearchResult(result.card);
+      return;
+    }
+
+    if (event.key === "Tab") {
+      setShowSearchResults(false);
+    }
+  };
+
   const addCardAllowedListIds = useMemo(() => {
     if (!board || board.lists.length === 0) return new Set<number>();
 
@@ -2695,7 +2799,7 @@ export default function BoardView() {
         </div>
 
         <div className="flex-1 max-w-2xl mx-6">
-          <div className="relative">
+          <div className="relative" ref={searchBoxRef}>
             <Search
               size={15}
               className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
@@ -2703,7 +2807,22 @@ export default function BoardView() {
             <input
               ref={searchInputRef}
               value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
+              onChange={(e) => {
+                setSearchTerm(e.target.value);
+                setShowSearchResults(true);
+              }}
+              onFocus={() => setShowSearchResults(true)}
+              onClick={() => setShowSearchResults(true)}
+              onKeyDown={handleSearchKeyDown}
+              role="combobox"
+              aria-expanded={searchResultsOpen}
+              aria-controls={SEARCH_RESULTS_ID}
+              aria-activedescendant={
+                searchResultsOpen && visibleSearchResults[activeSearchIndex]
+                  ? `${SEARCH_RESULTS_ID}-${activeSearchIndex}`
+                  : undefined
+              }
+              autoComplete="off"
               placeholder="Search cards, invoice, student, list title (Ctrl+K)"
               className="w-full h-9 pl-9 pr-9 rounded-lg bg-gray-100 border text-sm focus:ring-2 focus:ring-indigo-400/40 outline-none"
             />
@@ -2719,6 +2838,17 @@ export default function BoardView() {
               >
                 <X size={14} />
               </button>
+            )}
+            {searchResultsOpen && (
+              <SearchResults
+                id={SEARCH_RESULTS_ID}
+                results={visibleSearchResults}
+                totalCount={searchResults.length}
+                activeIndex={activeSearchIndex}
+                filtersApplied={hasActiveFilters}
+                onHover={setActiveSearchIndex}
+                onSelect={openSearchResult}
+              />
             )}
           </div>
         </div>
